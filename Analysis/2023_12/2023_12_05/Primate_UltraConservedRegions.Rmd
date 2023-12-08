@@ -1,0 +1,337 @@
+---
+title: "HK-PPI-hubs"
+author: "Martin Loza"
+date: "2023/12/04
+---
+
+On this workflow I would like to analyse the supplementary information of the constrained sequence acrosss 239 primates. This was an intersting paper (https://www.nature.com/articles/s41586-023-06798-8) with different insight into conserved elements in primates as compared with mammals. 
+
+We are wondering if there is some overlap with HK-CREs... are they more conserved in mammals, primates, or both? 
+
+
+NOTES:
+The data available from the paper mostly comes in an excel table. This is not so insightful data... but for now, let's analyse it.
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+library(GenomicRanges)
+library(readxl)
+library(ggrepel)
+
+## Global variables
+in_dir  <- "~/Documents/Projects/HK_Interactions/Analysis/2023_12/2023_12_05/"
+out_dir <- "~/Documents/Projects/HK_Interactions/Analysis/2023_12/2023_12_05/Results/"
+
+date = 231204
+
+#Functions
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions.R")
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions_Visualizations.R")
+
+#Local functions 
+
+# Get regions overlapping
+FindOverlappingRegions <- function(query_region = NULL, subject_region = NULL, min_overlap = 0){
+  
+  #get the query and subject genomic ranges objects
+  gr_query <- GRanges(seqnames = query_region[["chr"]],
+                      ranges = IRanges(start = query_region[["start"]],
+                                       end = query_region[["end"]]))
+  gr_subject <- GRanges(seqnames = subject_region[["chr"]],
+                        ranges = IRanges(start = subject_region[["start"]],
+                                         end = subject_region[["end"]]))
+  
+  
+  #Find the overlaps
+  overlaps <- findOverlaps(query = gr_query, subject = gr_subject,
+                           minoverlap = min_overlap, )
+  #return the ids
+  return(overlaps)
+}
+```
+
+## Load data
+
+Load annotated interactions 
+
+```{r}
+interactions <- readRDS("/Volumes/MARTIN_LOZA/Projects/HK_Interactions/Data/Commonly_used/interactions_all_230912.rds")
+interactions %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+
+Load supplementary data from the mentioned paper.
+
+Supplementary data description:
+
+2: S2_CDS_primate_specific_cons: Genes that have at least one exon constrained among primated but non across other mammals.
+
+3: S3_DHK_all: Elements that exhibited evidence of constratin across mammals or primates. They largely overlap
+
+4: S4_FP_all: TFBS footprints. Constraint by mammals or primates. 
+
+5: S5_UCE: Ultra conserved elements in primates.
+
+7: S7_MPRA: Massive parallel reporter assays of 148 cis-regulatory sequence elements.
+
+For now, let's start analysing the ultra conserved elements in primates (S5_UCE)
+
+```{r}
+uces <- read_xlsx(path = "/Volumes/MARTIN_LOZA/Projects/HK_Interactions/Data/Primates/41586_2023_6798_MOESM3_ESM.xlsx",
+                 sheet = "S5_UCE", col_names = TRUE)
+```
+
+Load dataset of hk-cp and housekeeping genes
+
+```{r}
+hk_cp_genes <- readRDS(file = "~/Documents/Projects/Enhancer_Grammar/Analysis/Weekly_analyses/2023_04/2023_04_18/Results/cp_nearestTSS_annotated_230413.rds")
+```
+
+Load the HKGs
+
+```{r}
+hkg <- readRDS(file = "/Volumes/MARTIN_LOZA/Projects/Enhancer_Grammar/Data/Commonly_used/Housekeeping_genes/hg38_hk_genes_220715.rds")
+```
+
+## Set up
+
+Let's remove duplicated elements. We don't care about interactions now, just the location of CREs
+
+```{r}
+cres <- interactions %>% filter(!duplicated(region_id))
+table(cres$n_celltypes)
+```
+
+Let's rename columns in the uces to match with our labels
+
+```{r}
+uces <- uces %>% dplyr::rename("end" = "stop")
+uces <- uces %>% dplyr::rename("chr" = "chromosome")
+```
+
+Add region id
+
+```{r}
+uces <- uces %>% mutate(id = paste0(chr,":",start,"-", end))
+uces <- uces %>% arrange(chr,start)
+```
+
+Let's create a fix-region for each CREs
+
+```{r}
+length_bp = 500
+cres_fixed <- cres %>% mutate(start = center - length_bp, end = center + length_bp)
+```
+
+## Analysis
+
+In this case, I would like to investigate first if the UCEs are found in any of the CREs we have. Here is worth double noticing that these elements are ultraconserved only in primates... so I would expect some of them to be in our data, but also, our HK-CREs could be conserved in mammals for example... Let's see..
+
+Something to notice here, is that these elements could be in hg19... let's see.
+
+Let's find the overlaps using the FindOverlappingRegions function.
+
+```{r}
+ovl <-FindOverlappingRegions(query_region = cres_fixed, subject_region = uces)
+ovl
+```
+Annotate the UCEs with the CREs annotations
+
+```{r}
+#subset the UCEs with a CREs overlapping
+ovl_uces <- uces[subjectHits(ovl),]
+#subset CREs with overlaps
+ovl_cres <- cres[queryHits(ovl),]
+```
+
+General summary
+
+```{r}
+cat("Percentage of UCEs with an overlapping CREs: \n", nrow(ovl_uces)/nrow(uces) )
+```
+
+```{r}
+table(ovl_cres$test_n_celltypes)
+table(ovl_cres$n_celltypes)%>% sort(decreasing = TRUE)
+table(ovl_cres$ann_v1) %>% sort(decreasing = TRUE)
+```
+
+Let's make some plots related to the cell type specificity of UCEs
+
+```{r fig.width=5}
+ovl_cres %>% 
+  # mutate(n_celltypes = as.factor(n_celltypes)) %>% 
+  group_by(n_celltypes) %>% count() %>% ungroup() %>% mutate(percentage = n/sum(n)*100 ) %>% 
+  ggplot(mapping = aes(x = "", y = n, fill = n_celltypes)) +
+  geom_bar(position = "fill", stat = "identity") +
+coord_polar("y", start=0) +
+    # geom_label_repel(aes(y = n, label = paste0(percentage, "%")),
+    #                 , show.legend = FALSE) +
+  theme_void()   
+
+```
+
+```{r}
+ovl_cres %>% MyHistogram(x = "test_n_celltypes", stat = "count")
+```
+
+They seem to follow the general distribution of CREs.... 
+
+Let's check the distribution by annotations..
+```{r}
+order <- ovl_cres %>% group_by(ann_v1) %>% count() %>% arrange(desc(n)) %>% ungroup()
+ovl_cres %>% arrange(desc(ann_v1)) %>% mutate(ann_v1 = factor(ann_v1, levels = order[["ann_v1"]])) %>%   MyHistogram(x = "ann_v1", stat = "count")
+```
+
+The majority are CP, then ELD... 
+Let's compare with the distribution of all the CREs
+
+```{r}
+table(cres$ann_v1) %>% sort(decreasing = TRUE)
+```
+
+I would like to compare only for HK-CP, which UCEs are related to HKG and which aren't.
+
+### HK-CPs
+
+Let's select the genes of cp overlapping with UCEs
+
+```{r}
+sel_genes <- hk_cp_genes %>% filter(region_id %in% ovl_cres$region_id)
+```
+
+```{r}
+table(sel_genes$is_HKG)
+```
+
+Not so much overlap....
+
+What about the HKG
+
+### HKG
+
+Let's define a core promoter regions of 200 bps upstream of the strand and 1000 bps from downstream
+
+```{r}
+upstream = 1000
+downstream = 200
+
+hkg_cp <- hkg %>%
+  mutate(tss = ifelse(strand == "+", yes = start, no = end)) %>%
+  select(chr, tss, strand, gene_name) %>% 
+  mutate(start = ifelse(strand == "+", yes = tss - upstream, no = tss - downstream)) %>% 
+  mutate(end = ifelse(strand == "+", yes = tss + downstream, no = tss + upstream))
+```
+
+```{r}
+#tests
+hkg_cp %>% mutate(t = end - start) %>% pull(t) %>% table()
+hkg_cp %>% filter(strand == "+") %>% mutate(t = tss - start) %>% pull(t) %>% table()
+hkg_cp %>% filter(strand == "-") %>% mutate(t = end - tss) %>% pull(t) %>% table()
+hkg_cp %>% filter(strand == "+") %>% mutate(t = end -  tss) %>% pull(t) %>% table()
+hkg_cp %>% filter(strand == "-") %>% mutate(t = tss - start) %>% pull(t) %>% table()
+```
+
+it looks good. Let's overlap with the UCEs
+
+```{r}
+ovl_2 <- FindOverlappingRegions(query_region = hkg_cp, subject_region = uces) 
+ovl_2
+```
+```{r}
+#subset HKG with overlaps
+ovl_hkg <- hkg_cp[queryHits(ovl_2),]
+```
+
+Only 24 HKG were found as UCEs in primates...
+
+What about the hg19 verions of the UCEs?
+
+```{r}
+ovl_3 <-FindOverlappingRegions(query_region = hkg_cp, subject_region = uces_hg38)
+ovl_3
+```
+Annotate the UCEs with the CREs annotations
+
+```{r}
+#subset HKG with overlaps
+ovl_hkg_2 <- hkg_cp[queryHits(ovl_3),]
+```
+
+## Tests
+
+### Regions in hg19? 
+
+It looks like the regions might be in hg19?... not so clear from the paper though...
+
+let's try to lift them up and redo the analysis.
+
+```{r}
+write.table(x = uces, file = paste0(out_dir,"uces_hg19.bed"), sep = "\t",
+          quote = FALSE, col.names = FALSE, row.names = FALSE, )
+```
+
+load converted data 
+
+```{r}
+uces_hg38 <- read.table(file = paste0(out_dir,"uces_hg38.bed")) %>% as.data.frame()
+#remove last column
+uces_hg38 <- uces_hg38[,-5]
+#add colnames
+colnames(uces_hg38) <- c("chr", "start", "end", "id")
+```
+
+```{r}
+#check for duplicated id. This might happen if the regions are too large, then liftOver splits them into contiguous regions
+any(duplicated(uces_hg38$id))
+```
+
+No duplicated ids. Let's redo the analysis.
+
+```{r}
+ovl <-FindOverlappingRegions(query_region = cres_fixed, subject_region = uces_hg38)
+ovl
+```
+Annotate the UCEs with the CREs annotations
+
+```{r}
+#subset the UCEs with a CREs overlapping
+ovl_uces <- uces[subjectHits(ovl),]
+#subset CREs with overlaps
+ovl_cres <- cres[queryHits(ovl),]
+```
+
+General summary
+
+```{r}
+cat("Percentage of UCEs with an overlapping CREs: \n", nrow(ovl_uces)/nrow(uces) )
+```
+
+```{r}
+table(ovl_cres$n_celltypes)%>% sort(decreasing = TRUE)
+table(ovl_cres$ann_v1) %>% sort(decreasing = TRUE)
+```
+
+there is less overlap.. and the conserved regions are enhancers long distance... I think this is not OK... maybe the regions are not in hg19 at the end...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

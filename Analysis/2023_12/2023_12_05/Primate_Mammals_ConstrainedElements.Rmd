@@ -1,0 +1,253 @@
+---
+title: "HK-PPI-hubs"
+author: "Martin Loza"
+date: "2023/12/04
+---
+
+On this workflow I would like to analyse the supplementary information of the constrained sequence acrosss 239 primates. This was an intersting paper (https://www.nature.com/articles/s41586-023-06798-8) with different insight into conserved elements in primates as compared with mammals. 
+
+Before I checked if ultraconserved elements were found in our set of CREs with nothing special found.
+
+Now I am wondering if open regions in mammals and primates could be found in our set of CREs.
+
+NOTES:
+The data available from the paper mostly comes in an excel table. This is not so insightful data... but for now, let's analyse it.
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+library(GenomicRanges)
+library(readxl)
+library(ggrepel)
+
+## Global variables
+in_dir  <- "~/Documents/Projects/HK_Interactions/Analysis/2023_12/2023_12_05/"
+out_dir <- "~/Documents/Projects/HK_Interactions/Analysis/2023_12/2023_12_05/Results/"
+
+date = 231204
+
+#Functions
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions.R")
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions_Visualizations.R")
+
+#Local functions 
+
+# Get regions overlapping
+FindOverlappingRegions <- function(query_region = NULL, subject_region = NULL, min_overlap = 0){
+  
+  #get the query and subject genomic ranges objects
+  gr_query <- GRanges(seqnames = query_region[["chr"]],
+                      ranges = IRanges(start = query_region[["start"]],
+                                       end = query_region[["end"]]))
+  gr_subject <- GRanges(seqnames = subject_region[["chr"]],
+                        ranges = IRanges(start = subject_region[["start"]],
+                                         end = subject_region[["end"]]))
+  
+  
+  #Find the overlaps
+  overlaps <- findOverlaps(query = gr_query, subject = gr_subject,
+                           minoverlap = min_overlap, )
+  #return the ids
+  return(overlaps)
+}
+```
+
+## Load data
+
+Load annotated interactions 
+
+```{r}
+interactions <- readRDS("/Volumes/MARTIN_LOZA/Projects/HK_Interactions/Data/Commonly_used/interactions_all_230912.rds")
+interactions %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+
+Load supplementary data from the mentioned paper.
+
+Supplementary data description:
+
+2: S2_CDS_primate_specific_cons: Genes that have at least one exon constrained among primated but non across other mammals.
+
+3: S3_DHS_all: Elements that exhibited evidence of constratin across mammals or primates. They largely overlap
+
+4: S4_FP_all: TFBS footprints. Constraint by mammals or primates. 
+
+5: S5_UCE: Ultra conserved elements in primates.
+
+7: S7_MPRA: Massive parallel reporter assays of 148 cis-regulatory sequence elements.
+
+For now, let's start analysing the ultra conserved elements in primates (S5_UCE)
+
+```{r}
+dhkes <- read_xlsx(path = "/Volumes/MARTIN_LOZA/Projects/HK_Interactions/Data/Primates/41586_2023_6798_MOESM3_ESM.xlsx",
+                 sheet = "S3_DHS_all", col_names = TRUE)
+```
+
+Load dataset of hk-cp and housekeeping genes
+
+```{r}
+hk_cp_genes <- readRDS(file = "~/Documents/Projects/Enhancer_Grammar/Analysis/Weekly_analyses/2023_04/2023_04_18/Results/cp_nearestTSS_annotated_230413.rds")
+```
+
+Load the HKGs
+
+```{r}
+hkg <- readRDS(file = "/Volumes/MARTIN_LOZA/Projects/Enhancer_Grammar/Data/Commonly_used/Housekeeping_genes/hg38_hk_genes_220715.rds")
+```
+
+## Set up
+
+Let's remove duplicated elements. We don't care about interactions now, just the location of CREs
+
+```{r}
+cres <- interactions %>% filter(!duplicated(region_id))
+table(cres$n_celltypes)
+```
+
+Let's rename columns in the dhkes to match with our labels
+
+```{r}
+dhkes <- dhkes %>% dplyr::rename("start" = "summit")
+dhkes <- dhkes %>% dplyr::rename("chr" = "chromosome")
+```
+
+Add region id
+
+```{r}
+dhkes <- dhkes %>% mutate(end = start)
+dhkes <- dhkes %>% mutate(id = paste0(chr,":",start,"-", end))
+dhkes <- dhkes %>% arrange(chr,start)
+```
+
+Let's create a fix-region for each CREs
+
+```{r}
+length_bp = 500
+cres_fixed <- cres %>% mutate(start = center - length_bp, end = center + length_bp)
+```
+
+## Analysis
+
+In this case, I would like to investigate first if the dhkes are found in any of the CREs we have. Here is worth double noticing that these elements are constrained elements in primates or mammals... so I should compare in maybe both types.
+
+Let's find the overlaps using the FindOverlappingRegions function.
+
+```{r}
+ovl <-FindOverlappingRegions(query_region = cres_fixed, subject_region = dhkes)
+ovl
+```
+
+Annotate the dhkes with the CREs annotations
+
+```{r}
+#subset the dhkes with a CREs overlapping
+ovl_dhkes <- dhkes[subjectHits(ovl),]
+#subset CREs with overlaps
+ovl_cres <- cres[queryHits(ovl),]
+```
+
+General summary
+
+```{r}
+cat("Percentage of dhkes with an overlapping CREs: \n", nrow(ovl_dhkes)/nrow(dhkes) )
+```
+
+Add type of constrain
+
+```{r}
+tmp <- ovl_cres %>% mutate(costraint_depth = ovl_dhkes$`constraint_depth(mam/prim)`)
+```
+
+For each CREs get the most common constraint
+
+```{r}
+tmp <- tmp %>% group_by(region_id) %>% count(costraint_depth) %>% filter(n == max(n)) %>% ungroup()
+#get ambiguous regions
+ambiguous <- tmp %>% filter(duplicated(region_id)) %>% select(region_id)
+```
+
+Label the CREs as M,P, A(ambiguous)
+
+```{r}
+tmp <- tmp %>%
+  filter(!duplicated(region_id)) %>% select(region_id, costraint_depth)
+idx <- which(tmp$region_id %in% ambiguous$region_id)
+tmp$costraint_depth[idx] <- "A"
+table(tmp$costraint_depth)
+```
+
+Get unique cres
+
+```{r}
+ovl_cres <- ovl_cres %>% filter(!duplicated(region_id))
+#pass information 
+ovl_cres <- ovl_cres %>% left_join(y = tmp, by = "region_id", keep = FALSE )
+table(ovl_cres$costraint_depth)
+```
+
+
+```{r}
+table(ovl_cres$test_n_celltypes)
+round(table(ovl_cres$test_n_celltypes)/table(cres$test_n_celltypes)*100, digits = 3)
+
+
+table(ovl_cres$ann_v1) 
+round(table(ovl_cres$ann_v1)/table(cres$ann_v1)*100, digits = 3)
+```
+
+```{r}
+ovl_cres %>% 
+  MyHistogram(x = "test_n_celltypes", fill = "costraint_depth", stat = "count")
+ovl_cres %>% 
+  MyHistogram(x = "test_n_celltypes", fill = "costraint_depth", stat = "count", position = "fill")
+```
+
+
+```{r}
+ovl_cres %>% MyHistogram(x = "ann_v1", fill = "costraint_depth", stat = "count") + theme(axis.text.x = element_text(angle = 60, hjust = 1))
+ovl_cres %>% MyHistogram(x = "ann_v1", fill = "costraint_depth", stat = "count", position = "fill") + theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+Same but only for HK=CP
+
+```{r}
+tt <- ovl_cres %>% filter(n_celltypes == 50 & ann_v1 == "CP")
+```
+
+```{r}
+tt %>% MyHistogram(x = "ann_v1", fill = "costraint_depth", stat = "count", position = "fill") + theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+Nothing special....
+
+
+Waht about all the CREs
+
+```{r}
+
+tmp_cres <- cres %>%
+  left_join(y = ovl_cres %>% select(region_id, costraint_depth), 
+             by = "region_id", keep = FALSE)
+idx <- which(is.na(tmp_cres$costraint_depth))
+tmp_cres$costraint_depth[idx] <- "N"
+table(tmp_cres$costraint_depth)
+tmp_cres <- tmp_cres %>% mutate(costraint_depth = factor(costraint_depth, levels = c("N", "A", "M", "P")))
+```
+
+```{r}
+tmp_cres %>% 
+  MyHistogram(x = "test_n_celltypes", fill = "costraint_depth", stat = "count")
+tmp_cres %>% 
+  MyHistogram(x = "test_n_celltypes", fill = "costraint_depth", stat = "count", position = "fill")
+```
+```{r}
+tmp_cres %>% MyHistogram(x = "ann_v1", fill = "costraint_depth", stat = "count") + theme(axis.text.x = element_text(angle = 60, hjust = 1))
+tmp_cres %>% MyHistogram(x = "ann_v1", fill = "costraint_depth", stat = "count", position = "fill") + theme(axis.text.x = element_text(angle = 60, hjust = 1))
+```
+
+Nothing special...
+
+
+
+
+
+
