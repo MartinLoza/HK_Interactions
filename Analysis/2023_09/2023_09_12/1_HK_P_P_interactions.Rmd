@@ -1,0 +1,422 @@
+---
+title: "Housekeeping P-P interactions"
+author: "Martin Loza"
+date: "2023/09/12
+---
+
+I would like to explore the existence of housekeeping promoter-promoter interactions. In other words, promoter-promoter interactions found in a large number of cell types.
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+library(GenomicRanges)
+library(ggrepel)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+
+## Global variables
+in_dir  <- "/Volumes/MARTIN_LOZA/Projects/Enhancer_Grammar/Data/"
+out_dir <- "~/Documents/Projects/Enhancer_Grammar/Analysis/Weekly_analyses/2023_09/2023_09_12/Results/"
+
+date = 230912
+red = "#CC6677"
+blue = "#6699CC"
+yellow = "#DDCC77"
+dpi = 300
+text_size = 14
+fig_size = 4
+point_size = 1
+alpha = 0.3
+
+#Functions
+source(file = "~/Documents/Projects/Enhancer_Grammar/Analysis/Functions.R")
+source(file = "~/Documents/Projects/Enhancer_Grammar/Analysis/Functions_Visualizations.r")
+
+#Local functions 
+GetGenesAnnotations <- function(keys = NULL, keys_type = "SYMBOL", annotations = c("SYMBOL","ENSEMBL","ENTREZID"), organism = "human"){
+  if(organism == "human"){
+    gene_annotations <- AnnotationDbi::select(x = org.Hs.eg.db, 
+                                              keys = keys,
+                                              columns = annotations,
+                                              keytype = keys_type)
+  }
+  return(gene_annotations)
+}
+```
+
+## Load data
+
+load P-P interactions annotated with the number of cell types they appear with their predicted targets
+
+```{r}
+# interactions_cp <- readRDS(file = paste0(out_dir,"/interactions_P_P_230912.rds"))
+interactions_cp <- readRDS(file = paste0(out_dir,"/interactions_P_P_v2_230912.rds"))
+any(duplicated(interactions_cp$id))
+```
+
+Load chromosome information
+
+```{r}
+chr_info <- readRDS(file = "/Volumes/MARTIN_LOZA/Projects/Enhancer_Grammar/Data/Commonly_used/hg38/hg38_chr_220721.rds")
+```
+
+Load HKG
+
+```{r}
+hkg <- readRDS(file = "/Volumes/MARTIN_LOZA/Projects/Enhancer_Grammar/Data/Commonly_used/Housekeeping_genes/hg38_hk_genes_220715.rds")
+```
+
+## Set up
+
+## Analysis
+
+Let's check the number of HK P-P interactions, as interactions that appear in every cell type.
+
+```{r}
+# table(interactions_cp$n_ct_interactions) 
+interactions_cp %>% filter(n_ct_interactions >= 45) %>% pull(n_ct_interactions) %>% table()
+interactions_cp %>% filter(n_ct_interactions >= 45) %>% pull(n_ct_interactions) %>% length()
+```
+We have more than 26000 interactions that appear in more than 45 cell types!
+
+Let's check specifically for HK-CP
+
+```{r}
+interactions_cp %>% filter(n_celltypes == 50) %>% filter(n_ct_interactions >= 45) %>% pull(n_ct_interactions) %>% length()
+```
+
+Almost all come from HK-CP!!
+
+### Correlation with Protein coding and HK genes
+
+Number of P-P interactions by chromosome
+
+```{r}
+interactions_cp %>%
+  ggplot(mapping = aes(x = chr)) + 
+  geom_histogram(stat = "count") + theme_light() +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+Number of P-P interactions by chromosome scaled by the number of Protein coding genes
+
+```{r}
+tmp_df <- interactions_cp %>%
+  group_by(chr) %>% count() %>%
+  ungroup() %>%
+  left_join(y = chr_info, by = "chr") %>% mutate(n_norm = n/n_pc_genes) %>%
+  mutate(chr = factor(chr, levels = paste0("chr",c(1:22,"X"))))
+```
+
+```{r}
+tmp_df %>%
+  ggplot(mapping = aes(x = chr, y = n_norm)) + 
+  geom_bar(stat="identity") + theme_light() +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+```{r}
+tmp_df %>% pull(n_norm) %>% summary()
+```
+
+```{r}
+correlation = cor(tmp_df$n_pc_genes, tmp_df$n, method = "pearson")
+tmp_df %>% ggplot(mapping = aes(x = n_pc_genes, y = n, label = chr)) + 
+  geom_point() + 
+  geom_text_repel(box.padding = 0.2) + 
+  geom_smooth(method=lm, col = red, alpha = 0.2, size = 0.5 ) + theme_bw() +
+  xlab("Number of protein-coding genes") + ylab("Number of P-P interactions") + 
+  annotate("text",x = 2000,y = 10000, 
+           label = paste0("r = ", round(correlation, digits = 3))) +
+  theme(text = element_text(size = text_size)) 
+```
+
+```{r}
+correlation = cor(tmp_df$n_hk_genes, tmp_df$n, method = "pearson")
+tmp_df %>% ggplot(mapping = aes(x = n_hk_genes, y = n, label = chr)) + 
+  geom_point() + 
+  geom_text_repel(box.padding = 0.2) + 
+  geom_smooth(method=lm, col = red, alpha = 0.2, size = 0.5 ) + theme_bw() +
+  xlab("Number of HK genes") + ylab("Number of P-P interactions") + 
+  annotate("text",x = 200,y = 10000, 
+           label = paste0("r = ", round(correlation, digits = 3))) +
+  theme(text = element_text(size = text_size)) 
+```
+
+### Correlation with Protein coding and HK genes (only HK-CP)
+
+Number of P-P interactions by chromosome
+
+```{r}
+tmp_df <- interactions_cp %>% filter(n_celltypes == 50 & n_ct_interactions >= 45) %>% 
+  group_by(chr) %>% count() %>%
+  ungroup() %>%
+  left_join(y = chr_info, by = "chr") %>% mutate(n_norm = n/n_pc_genes) %>%
+  mutate(chr = factor(chr, levels = paste0("chr",c(1:22,"X"))))
+```
+
+```{r}
+tmp_df %>%
+  ggplot(mapping = aes(x = chr, y = n))  + 
+  geom_bar(stat="identity") + theme_light() +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+Number of P-P interactions by chromosome scaled by the number of Protein coding genes
+
+```{r}
+tmp_df %>%
+  ggplot(mapping = aes(x = chr, y = n_norm)) + 
+  geom_bar(stat="identity") + theme_light() +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+```{r}
+tmp_df %>% pull(n_norm) %>% summary()
+```
+
+```{r}
+correlation = cor(tmp_df$n_pc_genes, tmp_df$n, method = "pearson")
+tmp_df %>% ggplot(mapping = aes(x = n_pc_genes, y = n, label = chr)) + 
+  geom_point() + 
+  geom_text_repel(box.padding = 0.2) + 
+  geom_smooth(method=lm, col = red, alpha = 0.2, size = 0.5 ) + theme_bw() +
+  xlab("Number of protein-coding genes") + ylab("Number of P-P interactions") + 
+  annotate("text",x = 2000,y = 1000, 
+           label = paste0("r = ", round(correlation, digits = 3))) +
+  theme(text = element_text(size = text_size)) 
+```
+
+```{r}
+correlation = cor(tmp_df$n_hk_genes, tmp_df$n, method = "pearson")
+tmp_df %>% ggplot(mapping = aes(x = n_hk_genes, y = n, label = chr)) + 
+  geom_point() + 
+  geom_text_repel(box.padding = 0.2) + 
+  geom_smooth(method=lm, col = red, alpha = 0.2, size = 0.5 ) + theme_bw() +
+  xlab("Number of HK genes") + ylab("Number of P-P interactions") + 
+  annotate("text",x = 200,y = 1000, 
+           label = paste0("r = ", round(correlation, digits = 3))) +
+  theme(text = element_text(size = text_size)) 
+```
+
+## HK P-P
+
+### Top target
+
+Let's check the genes with highest number of interactions
+
+```{r}
+# tmp_df <- interactions_cp %>% filter(n_ct_interactions >= 45) %>% arrange(desc(n_ct_interactions))
+tmp_df <- interactions_cp %>% filter(n_celltypes == 50) %>% filter(n_ct_interactions >= 45) %>%  arrange(desc(n_ct_interactions))
+#add hkg info
+
+tmp_df <- tmp_df %>%
+  mutate(type_target = ifelse(test = gene %in% hkg$gene_name, yes = "HKG", no= "other")) %>% 
+  mutate(type_enhancer = ifelse(test = nearest_gene %in% hkg$gene_name, yes = "HKG", no= "other")) 
+```
+
+```{r}
+cat("Number of HK-Genes targets")
+tmp_df %>% filter(!duplicated(gene)) %>% pull(type_target) %>% table()
+cat("Number of HK-Genes enhancer")
+tmp_df %>% filter(!duplicated(region_id)) %>% pull(type_enhancer) %>% table()
+```
+here there can be a bias because I filtered the HK-CP that only targets itself. Let's recheck after gettting the new data
+
+Number of interactions for each gene
+
+```{r}
+tmp_df %>% group_by(gene) %>% count() %>% ungroup() %>% pull(n) %>% summary()
+tmp_df %>% group_by(gene) %>% count() %>% ungroup() %>% slice_max(order_by = n, n = 100) %>% pull(gene)
+```
+get top targets as those targets with a number of interactions higher than the 75% 
+```{r}
+top_targets <- tmp_df %>% group_by(gene) %>% count() %>% ungroup() %>% 
+  filter(n > 3) %>% 
+  arrange(desc(n)) %>%
+  mutate(type_target = ifelse(test = gene %in% hkg$gene_name, yes = "HKG", no= "other"))
+table(top_targets$type_target)/nrow(top_targets)
+table(top_targets$type_target)
+```
+
+```{r}
+symbol = GetGenesAnnotations(keys = top_targets$gene, keys_type = "SYMBOL")
+write.csv(x = symbol[["ENTREZID"]],
+          file = paste0(out_dir,"/GO_analysis/top_targets_230913.csv"),
+          row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+#removing HKG
+tmp_targets <- top_targets %>% filter(type_target == "other")
+symbol = GetGenesAnnotations(keys = tmp_targets$gene, keys_type = "SYMBOL")
+write.csv(x = symbol[["ENTREZID"]],
+          file = paste0(out_dir,"/GO_analysis/top_targets_nonHKG_230913.csv"),
+          row.names = FALSE, col.names = FALSE, quote = FALSE)
+```
+
+### Top ePromoters
+
+Let's check the genes with highest number of interactions
+
+```{r}
+top_ePromoters <- tmp_df %>% group_by(region_id) %>% count() %>% ungroup()
+summary(top_ePromoters$n)
+any(duplicated(top_ePromoters$region_id))
+
+#select highly active ePromoters
+top_ePromoters <- top_ePromoters %>%
+  filter(n > 3) %>% 
+  arrange(desc(n)) 
+```
+
+```{r}
+top_ePromoters %>% slice_max(order_by = n, n = 100) %>% pull(nearest_gene)
+```
+
+
+we need to transfer the nearest gene information
+```{r}
+tmp_interactions <- interactions_cp %>%
+  filter(!duplicated(region_id)) %>% dplyr::select(region_id, nearest_gene)
+
+#add the gene information of these ePromoters
+top_ePromoters <- top_ePromoters %>% left_join(y = tmp_interactions, by = "region_id") %>%
+  mutate(type_target = ifelse(test = nearest_gene %in% hkg$gene_name, yes = "HKG", no= "other"))
+
+table(top_ePromoters$type_target)/nrow(top_ePromoters)
+table(top_ePromoters$type_target)
+```
+
+Let's check the GO of these genes. I need to transfor to EntrezID
+
+```{r}
+symbol = GetGenesAnnotations(keys = top_ePromoters$nearest_gene, keys_type = "SYMBOL")
+write.csv(x = symbol[["ENTREZID"]],
+          file = paste0(out_dir,"/GO_analysis/top_ePromoters_230913.csv"),
+          row.names = FALSE, col.names = FALSE, quote = FALSE)
+#removing HKG
+tmp_ePromoters <- top_ePromoters %>% filter(type_target == "other")
+symbol = GetGenesAnnotations(keys = tmp_ePromoters$nearest_gene, keys_type = "SYMBOL")
+write.csv(x = symbol[["ENTREZID"]],
+          file = paste0(out_dir,"/GO_analysis/top_ePromoters_nonHKG_230913.csv"),
+          row.names = FALSE, col.names = FALSE, quote = FALSE)
+```
+
+### Highly bi-directional (ePromoters which are targets)
+
+Get the intersection of the highly active ePromoters and targets
+
+```{r}
+highly_active_regions <- data.frame(gene = intersect(top_targets$gene, top_ePromoters$nearest_gene)) %>%
+  mutate(type = ifelse(test = gene %in% hkg$gene_name, yes = "HKG", no= "other"))
+table(highly_active_regions$type)
+table(highly_active_regions$type)/nrow(highly_active_regions)
+```
+
+```{r}
+highly_active_regions %>% slice_max(order_by = n, n = 100) %>% pull(nearest_gene)
+```
+
+Let's check the GO of these genes. I need to transfor to EntrezID
+
+```{r}
+symbol = GetGenesAnnotations(keys = highly_active_regions$gene, keys_type = "SYMBOL")
+write.csv(x = symbol[["ENTREZID"]],
+          file = paste0(out_dir,"/GO_analysis/high_regions_230913.csv"),
+          row.names = FALSE, col.names = FALSE, quote = FALSE)
+#removing HKG
+tmp_df <- highly_active_regions %>% filter(type == "other")
+symbol = GetGenesAnnotations(keys = tmp_df$gene, keys_type = "SYMBOL")
+write.csv(x = symbol[["ENTREZID"]],
+          file = paste0(out_dir,"/GO_analysis/high_region_nonHKG_230913.csv"),
+          row.names = FALSE, col.names = FALSE, quote = FALSE)
+```
+
+
+## Previous test (superseded)
+
+### Highly active targets
+
+Let's check the genes with highest number of interactions
+
+```{r}
+tmp_df <- interactions_cp %>% filter(n_ct_interactions >= 45) %>% arrange(desc(n_ct_interactions))
+  
+#add hkg info
+
+tmp_df <- tmp_df %>%
+  mutate(type_target = ifelse(test = gene %in% hkg$gene_name, yes = "HKG", no= "other")) %>% 
+  mutate(type_enhancer = ifelse(test = nearest_gene %in% hkg$gene_name, yes = "HKG", no= "other")) 
+```
+
+```{r}
+high_targets <- tmp_df %>% group_by(gene) %>% count() %>% ungroup()
+summary(high_targets$n)
+```
+
+```{r}
+high_targets <- high_targets %>%
+  filter(n > 3) %>% 
+  arrange(desc(n)) %>%
+  mutate(type_target = ifelse(test = gene %in% hkg$gene_name, yes = "HKG", no= "other"))
+table(high_targets$type_target)/nrow(high_targets)
+table(high_targets$type_target)
+```
+
+Let's check the GO of these genes. I need to transfor to EntrezID
+
+```{r}
+symbol = GetGenesAnnotations(keys = high_targets$gene, keys_type = "SYMBOL")
+write.csv(x = symbol[["ENTREZID"]],
+          file = paste0(out_dir,"/GO_analysis/high_targets.csv"),
+          row.names = FALSE, col.names = FALSE, quote = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
