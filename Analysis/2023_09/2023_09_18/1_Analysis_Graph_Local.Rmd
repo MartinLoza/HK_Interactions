@@ -1,0 +1,344 @@
+---
+title: "P-P Interactions, analysis by graph, LOCAL"
+author: "Martin Loza"
+date: "2023/09/18
+---
+
+For the set of core-promoters, I would like to make a graph analysis of thein interactions. I would like to use the n_ct_interactions as a weight for the edges.
+
+In previous analysis I obtained nodes for a long distance, I would like to set some constraints to avoid this poblem.
+
+
+NOTES:
+
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+library(GenomicRanges)
+library(igraph)
+library(ggraph)
+
+## Global variables
+in_dir  <- "~/Documents/Projects/HK_Interactions/Analysis/2023_09/2023_09_18/Results/"
+out_dir <- "~/Documents/Projects/HK_Interactions/Analysis/2023_09/2023_09_18/Results/"
+
+date = 2309018
+red = "#CC6677"
+blue = "#6699CC"
+yellow = "#DDCC77"
+
+#Functions
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions.R")
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions_Visualizations.R")
+
+#Local functions 
+
+GetGenerationEdges <- function(edges = NULL, init_nodes = NULL, n_generations = 2){
+  
+  #loop. In each generation get the edges associated to init nodes
+  for(i in 2:n_generations){
+    tmp_df <- edges %>% filter(gene_from %in% all_of(init_nodes) | gene_to %in% all_of(init_nodes))
+    init_nodes <- union(tmp_df$gene_from, tmp_df$gene_to)
+  }
+
+  return(tmp_df)
+}
+```
+
+## Load data
+
+Load annotated interactions 
+
+```{r}
+interactions <- readRDS(paste0(in_dir,"/interactions_all_230912.Rds"))
+interactions %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+
+## Set up
+
+I would like to select interactions only for CP 
+
+```{r}
+interactions <- interactions %>% filter(ann_v1 == "CP")
+interactions$ann_v1 <- droplevels(interactions$ann_v1)
+interactions %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+
+Check for duplicated interactions 
+
+```{r}
+any(duplicated(interactions$id))
+```
+
+Set the absolute distance of interactions 
+
+```{r}
+interactions <- interactions %>%
+  mutate(abs_distance = abs(distance))
+```
+
+## Analysis
+
+### Directed graph
+
+For now, let's assume that the regions corresponds to an annotated gene
+Later, let's check for divergent genes too. For now, let's use the nearest genes
+
+We need to get a data frame with the edges and the weight information
+
+```{r}
+#set new genes with direction
+interactions <- interactions %>% 
+  mutate(gene_from = nearest_gene, gene_to = gene) %>%
+  mutate(weight = n_ct_interactions/50) #normalized weights
+#get the edges data frames
+edges_df <- interactions %>% dplyr::select(gene_from, gene_to, weight)
+head(edges_df)
+```
+
+Get the directed graph
+
+```{r}
+#get graph from edges
+graph_dir<- graph.data.frame(d = edges_df, directed = TRUE)
+```
+
+It looks like in the case of weighted graphs, the degree it's called strength. 
+Let's get the strength of the nodes
+
+```{r}
+strength <- strength(graph = graph_dir, mode = "all", loops = TRUE)
+strength <- data.frame(gene = names(strength), strength = strength)
+```
+
+Let's try to select the top nodes
+
+```{r}
+top_nodes <- strength %>% slice_max(order_by = strength, n = 100) %>% arrange(desc(strength))
+top_nodes$gene
+```
+
+#### Test: Distance limit
+
+I would like to verify how the graph changes if we only consider interactions within a certain threshold. 
+
+```{r}
+thr <- 2.0e6
+# thr <- 0.5e6
+sel_interactions <- interactions %>%
+  filter(abs_distance <= thr )
+
+#get filtered edges
+filtered_edges <- sel_interactions %>% dplyr::select(gene_from, gene_to, weight)
+```
+
+For the top nodes, let's get the nodes until the second generation.
+Let's se
+
+```{r}
+sel_edges <- GetGenerationEdges(edges = filtered_edges, init_nodes = "WDR74", n_generations = 4)
+```
+
+
+```{r}
+sel_graph <- graph.data.frame(d = sel_edges, directed = TRUE)
+
+sel_strength <- strength(graph = sel_graph, mode = "all", loops = TRUE)
+sel_strength <- data.frame(gene = names(sel_strength), strength = sel_strength)
+
+#summary strength
+summ <- summary(sel_strength$strength)
+summ
+
+#select top nodes
+sel_nodes <- sel_strength %>% slice_max(order_by = strength, n = 10)
+# sel_nodes <- sel_strength %>% filter(strength >= summ["3rd Qu."])
+sel_nodes$gene
+```
+Let's plot
+
+```{r fig.asp=1}
+sel_graph %>%
+  ggraph(layout = "centrality",
+         # centrality = evcent(sel_graph)$vector) +
+         centrality = hub.score(sel_graph)$vector) +
+  geom_edge_link0(aes(edge_alpha = E(sel_graph)$weight), edge_colour = "gray70") +
+  geom_node_point(aes(size = sel_strength$strength), show.legend = FALSE,  color = blue) +
+  theme_void() + 
+  geom_node_text(aes(label = name, filter = name %in% sel_nodes$gene ), 
+                 color = 'black', 
+                 size = 5)+ theme(legend.position = "none") 
+```
+
+#### Test by chromosome
+
+I would like to verify how the graph changes if we only consider interactions within a certain threshold. 
+
+```{r}
+ch <- "chr11"
+thr <- 2.0e6
+sel_interactions <- interactions %>%
+  filter(abs_distance <= thr) %>%
+    filter(chr == ch )  
+
+#get filtered edges
+filtered_edges <- sel_interactions %>% dplyr::select(gene_from, gene_to, weight)
+```
+
+```{r}
+sel_graph <- graph.data.frame(d = filtered_edges, directed = TRUE)
+
+sel_strength <- strength(graph = sel_graph, mode = "all", loops = TRUE)
+sel_strength <- data.frame(gene = names(sel_strength), strength = sel_strength)
+
+#summary strength
+summ <- summary(sel_strength$strength)
+summ
+
+#select top nodes
+sel_nodes <- sel_strength %>% slice_max(order_by = strength, n = 50)
+# sel_nodes <- sel_strength %>% filter(strength >= summ["3rd Qu."])
+sel_nodes$gene
+```
+Let's plot
+
+```{r fig.asp=1}
+ggraph(sel_graph,layout = "stress")+
+  geom_edge_link0(aes(edge_alpha = E(sel_graph)$weight), edge_colour = "gray70")+
+  geom_node_point(aes(size = sel_strength$strength), show.legend = FALSE,  color = blue)+
+  theme_void() + 
+  geom_node_text(aes(label = name, filter = name %in% sel_nodes$gene ), 
+                 color = 'black', 
+                 size = 3)+ theme(legend.position = "none") 
+```
+
+
+### HK PPI graph
+
+For now, let's assume that the regions corresponds to an annotated gene
+Later, let's check for divergent genes too. For now, let's use the nearest genes
+
+We need to get a data frame with the edges and the weight information
+
+```{r}
+#set new genes with direction
+interactions_ppi <- interactions %>% filter(n_ct_interactions > 45) %>% 
+  mutate(gene_from = nearest_gene, gene_to = gene) %>%
+  mutate(weight = n_ct_interactions/50) #normalized weights
+#get the edges data frames
+edges_df <- interactions_ppi %>% dplyr::select(gene_from, gene_to, weight)
+head(edges_df)
+```
+
+Get the directed graph
+
+```{r}
+#get graph from edges
+graph_dir<- graph.data.frame(d = edges_df, directed = TRUE)
+```
+
+It looks like in the case of weighted graphs, the degree it's called strength. 
+Let's get the strength of the nodes
+
+```{r}
+strength <- strength(graph = graph_dir, mode = "all", loops = TRUE)
+strength <- data.frame(gene = names(strength), strength = strength)
+```
+
+Let's try to select the top nodes
+
+```{r}
+top_nodes <- strength %>% slice_max(order_by = strength, n = 100) %>% arrange(desc(strength))
+top_nodes$gene
+```
+
+#### Plot top nodes
+
+
+```{r}
+ch <- "chr19"
+thr <- 2.0e6
+sel_interactions <- interactions_ppi %>%
+  filter(abs_distance <= thr) %>%
+    filter(chr == ch )
+
+#get filtered edges
+filtered_edges <- sel_interactions %>% dplyr::select(gene_from, gene_to, weight)
+```
+
+
+```{r}
+sel_graph <- graph.data.frame(d = filtered_edges, directed = TRUE)
+is_weighted(sel_graph)
+
+sel_strength <- strength(graph = sel_graph, mode = "all", loops = TRUE)
+sel_strength <- data.frame(gene = names(sel_strength), strength = sel_strength)
+
+#summary strength
+summ <- summary(sel_strength$strength)
+summ
+
+#select top nodes
+sel_nodes <- sel_strength %>% slice_max(order_by = strength, n = 5)
+# sel_nodes <- sel_strength %>% filter(strength >= summ["3rd Qu."])
+sel_nodes$gene
+```
+Let's plot
+
+```{r fig.asp=1}
+sel_graph %>%
+  ggraph(layout = "centrality",
+         # centrality = evcent(sel_graph)$vector) +
+         centrality = hub.score(sel_graph)$vector) +
+  geom_edge_link0(aes(edge_alpha = E(sel_graph)$weight), edge_colour = "gray70") +
+  geom_node_point(aes(size = sel_strength$strength), show.legend = FALSE,  color = blue) +
+  theme_void() + 
+  geom_node_text(aes(label = name, filter = name %in% sel_nodes$gene ), 
+                 color = 'black', 
+                 size = 3)+ theme(legend.position = "none")
+```
+
+### Test by chromosome
+
+I would like to verify how the graph changes if we only consider interactions within a certain threshold. 
+
+```{r}
+ch <- "chr19"
+thr <- 2.0e6
+sel_interactions <- interactions_ppi %>%
+  filter(abs_distance <= thr) %>%
+    filter(chr == ch )
+
+#get filtered edges
+filtered_edges <- sel_interactions %>% dplyr::select(gene_from, gene_to, weight)
+```
+
+```{r}
+sel_graph <- graph.data.frame(d = filtered_edges, directed = TRUE)
+
+sel_strength <- strength(graph = sel_graph, mode = "all", loops = TRUE)
+sel_strength <- data.frame(gene = names(sel_strength), strength = sel_strength)
+
+#summary strength
+summ <- summary(sel_strength$strength)
+summ
+
+#select top nodes
+sel_nodes <- sel_strength %>% slice_max(order_by = strength, n = 50)
+# sel_nodes <- sel_strength %>% filter(strength >= summ["3rd Qu."])
+sel_nodes$gene
+```
+Let's plot
+
+```{r fig.asp=1}
+ggraph(sel_graph,layout = "stress")+
+  geom_edge_link0(aes(edge_alpha = E(sel_graph)$weight), edge_colour = "gray70")+
+  geom_node_point(aes(size = sel_strength$strength), show.legend = FALSE,  color = blue)+
+  theme_void() + 
+  geom_node_text(aes(label = name, filter = name %in% sel_nodes$gene ), 
+                 color = 'black', 
+                 size = 3)+ theme(legend.position = "none") 
+```

@@ -1,0 +1,259 @@
+---
+title: "Housekeeping P-P interactions"
+author: "Martin Loza"
+date: "2023/09/15
+---
+
+For the set of promoters and core-promoters, I would like to analyse the housekeeping promoter-promoter interactions, e.g., interactions found in all the 50 cell types
+
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+library(GenomicRanges)
+library(igraph)
+library(org.Hs.eg.db)
+# library(AnnotationDbi)
+# library(ggraph)
+library(ggrepel)
+
+## Global variables
+in_dir  <- "~/Documents/Projects/Enhancer_Grammar/Analysis/Weekly_analyses/2023_09/2023_09_18/Results/"
+out_dir <- "~/Documents/Projects/Enhancer_Grammar/Analysis/Weekly_analyses/2023_09/2023_09_18/Results/"
+
+date = 230915
+red = "#CC6677"
+blue = "#6699CC"
+yellow = "#DDCC77"
+dpi = 300
+text_size = 14
+fig_size = 4
+point_size = 1
+alpha = 0.3
+
+#Functions
+source(file = "~/Documents/Projects/Enhancer_Grammar/Analysis/Functions.R")
+source(file = "~/Documents/Projects/Enhancer_Grammar/Analysis/Functions_Visualizations.r")
+
+#Local functions 
+GetGenesAnnotations <- function(keys = NULL, keys_type = "SYMBOL", annotations = c("SYMBOL","ENSEMBL","ENTREZID"), organism = "human"){
+  if(organism == "human"){
+    gene_annotations <- AnnotationDbi::select(x = org.Hs.eg.db, 
+                                              keys = keys,
+                                              columns = annotations,
+                                              keytype = keys_type)
+  }
+  return(gene_annotations)
+}
+```
+
+## Load data
+
+load the CRES annotated with the number of cell types by interactions
+
+```{r}
+interactions <- readRDS(file = paste0(in_dir, "interactions_all_230912.rds"))
+interactions %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+load chromosome information
+
+```{r}
+chr_info <- readRDS(file = "/Volumes/MARTIN_LOZA/Projects/Enhancer_Grammar/Data/Commonly_used/hg38/hg38_chr_220721.rds")
+```
+
+## Set up
+
+I would like to select interactions only for CP or promoters
+For now, let's do it only for core promoters
+
+```{r}
+# interaction <- interaction %>% filter(ann_v1 == "CP" | ann_v1 == "P")
+interactions_cp <- interactions %>% filter(ann_v1 == "CP")
+interactions_cp$ann_v1 <- droplevels(interactions_cp$ann_v1)
+interactions_cp %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+Most core-promoters are HK-CREs. This make sense, since most PPI have been described as to be related to housekeeping functions.
+
+Let's select only HK-PPI
+
+```{r}
+hk_ppi <-  interactions_cp %>% filter(n_ct_interactions >= 45)
+hk_ppi %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+
+All of them are in HK-regions. That is good.
+
+## Analysis
+
+I would like to annotate the number of HK-ppi for each region.
+
+For now, let's filter interactions longer than a given threshold
+
+```{r}
+thr <- 1.0e6
+# thr <- 0.5e6
+tmp_df <- hk_ppi %>%
+  mutate(abs_distance = abs(distance)) %>%
+  filter(abs_distance <= thr )
+
+#get the number of hk_ppi for regions
+tmp_counts <- tmp_df %>% group_by(region_id) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(n_hk_ppi = n) %>%
+  dplyr::select(region_id, n_hk_ppi)
+#transfer info
+sel_hk_ppi <- tmp_df %>% left_join(y = tmp_counts, by = "region_id")
+
+rm(tmp_df, tmp_counts)
+```
+
+```{r}
+cat("Number of HK-CPs with HK-PPI: \n")
+sel_hk_ppi %>% filter(n_hk_ppi > 1) %>%  filter(!duplicated(region_id)) %>% nrow()
+cat("Number of PPI for each HK-CREs: \n")
+sel_hk_ppi %>% filter(n_hk_ppi > 1) %>%  group_by(region_id) %>% count() %>% ungroup() %>% pull(n) %>% summary()
+cat("Distance from CREs to target gene: \n")
+sel_hk_ppi %>% filter(n_hk_ppi > 1) %>% pull(abs_distance) %>% summary()
+```
+
+Which ones are the top genes?
+```{r}
+sel_hk_ppi %>% filter(n_hk_ppi > 1) %>%  filter(!duplicated(region_id)) %>% top_n(wt = n_hk_ppi, n = 100) %>% arrange(desc(n_hk_ppi)) %>%  pull(nearest_gene)
+```
+Numbers by chromosome
+
+```{r}
+sel_hk_ppi %>% MyHistogram(x = "chr", stat = "count")
+```
+
+
+```{r}
+tmp_df <- sel_hk_ppi %>% group_by(chr) %>% count() %>% ungroup() %>% mutate(n_hk_ppi = n)
+tmp_df <- tmp_df %>% left_join(y = chr_info, by = "chr")
+
+correlation = cor(tmp_df$n_pc_genes, tmp_df$n_hk_ppi, method = "pearson")
+tmp_df %>% ggplot(mapping = aes(x = n_pc_genes, y = n_hk_ppi, label = chr)) + 
+  geom_point() + 
+  geom_text_repel(box.padding = 0.2) + 
+  geom_smooth(method=lm, col = red, alpha = 0.2, size = 0.5 ) + theme_bw() +
+  xlab("Number of protein-coding genes") + ylab("Number of HK-PPI") + 
+  annotate("text",x = 2000,y = 1000, 
+           label = paste0("r = ", round(correlation, digits = 3))) +
+  theme(text = element_text(size = text_size)) 
+```
+
+Comparison with HKG
+
+```{r}
+correlation = cor(tmp_df$n_hk_genes, tmp_df$n_hk_ppi, method = "pearson")
+tmp_df %>% ggplot(mapping = aes(x = n_hk_genes, y = n_hk_ppi, label = chr)) + 
+  geom_point() + 
+  geom_text_repel(box.padding = 0.2) + 
+  geom_smooth(method=lm, col = red, alpha = 0.2, size = 0.5 ) + theme_bw() +
+  xlab("Number of HKG") + ylab("Number of HK-PPI") + 
+  annotate("text",x = 200,y = 1000, 
+           label = paste0("r = ", round(correlation, digits = 3))) +
+  theme(text = element_text(size = text_size)) 
+```
+
+## Mutual PPI
+
+I would like to know if there is any mutual PPI
+
+Let's  confirm that we don't have duplicated id, e.g., CREs+target identifier
+
+```{r}
+any(duplicated(sel_hk_ppi$id))
+```
+
+```{r}
+sel_hk_ppi <- sel_hk_ppi %>% mutate(gene_from = nearest_gene, gene_to = gene) %>%
+  mutate(id_ggi = paste0(gene_from,"_", gene_to))
+```
+
+Remove self interactions
+
+```{r}
+filtered_ppi <- sel_hk_ppi %>% filter(gene_from != gene_to & distance >= 500)
+```
+
+Let's create an asymetric adjacency matrix 
+
+```{r}
+#get edged
+edges_df <- filtered_ppi %>% dplyr::select(gene_from, gene_to)
+#create graph
+directed_graph <- igraph::graph_from_data_frame(d = edges_df, directed = TRUE)
+
+# Find mutually connected (symmetric) edges
+mutual_edges <- which(igraph::is.mutual(directed_graph))
+
+m_edges <- edges_df[mutual_edges,]
+m_edges <- m_edges %>% mutate(id_ggi =  paste0(gene_from,"_", gene_to))
+```
+
+```{r}
+#select mutual ppi
+tt <- sel_hk_ppi %>% filter(id_ggi %in% m_edges$id_ggi)
+```
+
+
+MOSTLY CAPTURED DIVERGENT GENES. OR G-G-I OF GENES WHICH TSS ARE CLOSE. 
+MAYBE NOT SO SIGNIFICANT. BETTER THEN TO CONFIRM THE PREVIOUS ANALYSES USING HI-C DATA.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
