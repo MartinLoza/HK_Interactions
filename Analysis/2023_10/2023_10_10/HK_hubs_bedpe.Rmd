@@ -1,0 +1,205 @@
+---
+title: "HK-hubs"
+author: "Martin Loza"
+date: "2023/10/10
+---
+
+I would like to visualize housekeeping hubs in the micro c data
+
+
+
+NOTES:
+
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+library(GenomicRanges)
+library(igraph)
+library(ggraph)
+
+## Global variables
+in_dir  <- "~/Documents/Projects/HK_Interactions/Analysis/2023_09/2023_09_18/Results/"
+out_dir <- "~/Documents/Projects/HK_Interactions/Analysis/2023_09/2023_09_18/Results/"
+
+date = 231010
+
+#Functions
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions.R")
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions_Visualizations.R")
+
+#Local functions 
+
+GetGenerationEdges <- function(edges = NULL, init_nodes = NULL, n_generations = 2){
+  
+  #loop. In each generation get the edges associated to init nodes
+  for(i in 2:n_generations){
+    tmp_df <- edges %>% filter(gene_from %in% all_of(init_nodes) | gene_to %in% all_of(init_nodes))
+    init_nodes <- union(tmp_df$gene_from, tmp_df$gene_to)
+  }
+
+  return(tmp_df)
+}
+```
+
+## Load data
+
+Load annotated interactions 
+
+```{r}
+interactions <- readRDS(paste0(in_dir,"/interactions_all_230912.Rds"))
+interactions %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+
+## Set up
+
+I would like to select interactions only for CP 
+
+```{r}
+interactions <- interactions %>% filter(ann_v1 == "CP")
+interactions$ann_v1 <- droplevels(interactions$ann_v1)
+interactions %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+
+Check for duplicated interactions 
+
+```{r}
+any(duplicated(interactions$id))
+```
+
+Set the absolute distance of interactions 
+
+```{r}
+interactions <- interactions %>%
+  mutate(abs_distance = abs(distance))
+```
+
+## Analysis
+
+### Directed graph
+
+For now, let's assume that the regions corresponds to an annotated gene
+Later, let's check for divergent genes too. For now, let's use the nearest genes
+
+We need to get a data frame with the edges and the weight information
+
+```{r}
+#set new genes with direction
+interactions <- interactions %>% 
+  mutate(gene_from = nearest_gene, gene_to = gene) %>%
+  mutate(weight = n_ct_interactions/50) #normalized weights
+#get the edges data frames
+edges_df <- interactions %>% dplyr::select(gene_from, gene_to, weight)
+```
+
+Get the directed graph
+
+```{r}
+#get graph from edges
+graph_dir<- graph.data.frame(d = edges_df, directed = TRUE)
+```
+
+It looks like in the case of weighted graphs, the degree it's called strength. 
+Let's get the strength of the nodes
+
+```{r}
+strength <- strength(graph = graph_dir, mode = "all", loops = TRUE)
+strength <- data.frame(gene = names(strength), strength = strength)
+```
+
+Let's try to select the top nodes
+
+```{r}
+n_top = 500
+top_nodes <- strength %>% slice_max(order_by = strength, n = n_top) %>% arrange(desc(strength))
+hub_genes <- top_nodes$gene
+```
+
+### setup hubs 
+
+I would like to analyze the core promoters of hub genes in the micro-c data
+
+let's get the ppi of hub genes
+
+```{r}
+#hub_ppi <- interactions %>% filter(gene_from %in% hub_genes | gene_to %in% hub_genes)
+# for now, let's focus on the ePromoters, promoters with enhancer capabilities
+hub_ppi <- interactions %>% filter(gene_from %in% hub_genes)
+```
+
+let's check how many regions we got 
+
+```{r}
+#number of unique regions
+hub_ppi %>% filter(!duplicated(region_id)) %>% nrow()
+```
+
+we have more regions than unique hubs. This is because a gene hub could have more than one associated TSS. Therefore, for each gene, let's focus on the transcript with higher number of interactions.
+
+```{r}
+#get the top TSS of each hub
+hub_region <- hub_ppi %>% 
+  group_by(gene_from) %>%
+  count(region_id) %>%
+  slice_max(n, n = 1) %>% 
+  ungroup() %>% select(region_id)
+```
+
+setup bedpe
+
+```{r}
+#fix length
+l = 500
+
+#select center and chromosome of hub regions.
+#NOTE: there can be more than one region than gene_from as they can have the same number of target genes, so more than one regions is selected after slice_max
+sel_regions <- interactions %>% 
+  filter(!duplicated(region_id)) %>% 
+  filter(region_id %in% hub_region$region_id) %>% 
+  select(chr, center) %>% 
+  mutate(start = center - l, end = center - l)
+```
+
+
+```{r}
+#setup temporal bedpe
+tmp_bedpe <- sel_regions %>% 
+  mutate(chr1 = chr, chr2 = chr, x1 = start, x2 = end, y1 = start, y2 = end,
+         name = ".", score = ".", 
+         strand1 = ".", strand2 = ".") %>% 
+  select(chr1, x1, x2, chr2, y1, y2, name, score, strand1, strand2)
+
+#save bedpe
+write.table(x = tmp_bedpe,
+            paste0(file = "~/Documents/Projects/HK_Interactions/Analysis/2023_10/2023_10_10/tmp_results/hub_cp_top_",n_top,".bedpe"),
+            quote = FALSE, sep = "\t", row.names = FALSE, col.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,18 @@
+TRACKS USED IN JUICEBOX
+
+#K562 - CTCF - p-signal - John Stamato.. - ENCFF221XPQ.bigWig #maybe other to kind of standardize
+K562 - CTCF - p-signal - Bradley Bernstein - ENCFF442ACI.bigWig
+K562 - H3K27ac - p-signal - Bradley Bernstein - ENCFF094XCU.bigWig
+K562 - H3K4me3 - p-signal - Bradley Bernstein - ENCFF036HPL.bigWig
+K562 - H3K4me1 - p-signal - Peggy Farnham - ENCFF783QIW.bigWig
+
+# EXTRAS
+
+K562 - CAGE - transcription start sites - Piero Carninci - ENCFF359LSQ.bigBed
+K562 - MYC - signal p-value - Sherman Weiss - ENCFF898DAB.bigWigmy
+K562 - H3K4me2 - p-signal -ENCFF523HCI.bigWig
+
+2023/10/17
+
+K562 - CTCFL - signal-p-value - Richard Myers - ENCFF390UEN.bigWig
+K562 - KLF1 - signal-p-value - Michel Snyder -
