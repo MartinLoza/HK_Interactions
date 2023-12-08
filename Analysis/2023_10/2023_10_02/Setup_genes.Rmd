@@ -1,0 +1,46 @@
+---
+title: "Setup genes"
+author: "Martin Loza"
+date: "2023/09/29
+---
+
+I would like to create a bed file with the genes
+
+```{r setup}
+library(dplyr)
+
+```
+
+## Load data
+
+load cres with their predicted targets
+
+```{r}
+genes <- readRDS("/Volumes/MARTIN_LOZA/Projects/Enhancer_Grammar/Data/Commonly_used/hg38/hg38_transcripts_universe_221121.rds")
+```
+
+## arrenge for bed
+
+```{r}
+genes <- genes %>% mutate(score = ".")
+bed <- genes %>% select(chr, start, end, gene_name, score, strand)
+```
+
+## save as bed file
+
+```{r}
+write.table(x = bed, file = "/Volumes/MARTIN_LOZA/Projects/HK_Interactions/Data/Genes/transcripts_universe_221121.bed", sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,10 @@
+## code for transforming cool data into h5
+
+hicConvertFormat -m Jurkat_mapq_30.mcool::/resolutions/2000 -o Jurkat_mapq_30_res2K.h5 --inputFormat cool --outputFormat h5
+
+#in this case change Jurkat_map_30.mcool for any other input name
+
+## code for correcting the h5 matrix
+
+hicCorrectMatrix correct -m Jurkat_mapq_30_res2k.h5 --filterThreshold -2 5 -o corrected_res2k.h5
+

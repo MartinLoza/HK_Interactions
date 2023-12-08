@@ -1,0 +1,59 @@
+---
+title: "Test: get cool files from mcool"
+author: "Martin Loza"
+date: "2023/10/28
+---
+
+This is my first test using Rstudio for python. I would like to create a cool from from a mcool.
+
+```{r setup, include=FALSE}
+library(reticulate)
+
+#load python
+use_python(python = "/Users/martin/miniconda3/envs/HK_PPI/bin/python")
+
+## Global variables
+in_dir  <- "/Volumes/MARTIN_LOZA/Projects/HK_Interactions/Data/HiC/PolyII_dynamics_NG/"
+out_dir <- in_dir
+
+date = 231028
+
+#Local functions 
+
+```
+
+## Setup python
+
+```{python}
+import cooler
+```
+
+## Analysis
+
+Save a test resolution
+
+```{python}
+resolution = 1000000
+
+#cool file
+mcool_file_path = "/Volumes/MARTIN_LOZA/Projects/HK_Interactions/Data/HiC/PolyII_dynamics_NG/Jurkat_mapq_30.mcool"
+
+#output dir
+out_dir = "/Volumes/MARTIN_LOZA/Projects/HK_Interactions/Data/HiC/PolyII_dynamics_NG/"
+
+# Create a Cooler object for the specific resolution
+c = cooler.Cooler(f"{mcool_file_path}::resolutions/{resolution}")
+
+# Specify the output path for the extracted .cool file
+output_cool_file = f"{out_dir}_{resolution}.cool"
+
+# Copy the data at the specified resolution to the .cool file
+cooler.
+```
+
+```{python}
+mcool = cooler.Cooler(mcool_file_path)
+```
+
+
+
