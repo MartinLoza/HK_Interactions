@@ -163,6 +163,9 @@ cython_debug/
 # Csv files
 *.csv
 
+# tsv files
+*.tsv
+
 # R objects
 *.rds
 *.RData
@@ -187,3 +190,4 @@ cython_debug/
 #Files in temporary folders
 tmp_results/
 tmp/
+.Rproj.user
