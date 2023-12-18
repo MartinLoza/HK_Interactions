@@ -1,0 +1,119 @@
+---
+title: "Analysis average HiC"
+author: "Martin Loza"
+date: "2023/12/18
+---
+
+On this workflow I want to analyse the average HiC data generated in other jupyter notebooks. I would like for now just to analyse the distribution of the average by chromosomes.
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+
+
+## Global variables
+in_dir  <- "~/Documents/Projects/HK_Interactions/Analysis/2023_12/2023_12_19/Results/"
+out_dir <- "~/Documents/Projects/HK_Interactions/Analysis/2023_12/2023_12_05/Results/"
+
+date = 231218
+
+#Functions
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions.R")
+source(file = "~/Documents/Projects/HK_Interactions/Analysis/Functions_Visualizations.R")
+
+#Local functions 
+
+# Get regions overlapping
+
+```
+
+## Load average data
+
+```{r}
+resolution = '1000000'
+average_data = read.table(file = paste0(in_dir, "mean_values_", resolution, ".tsv"), 
+                          header = TRUE, sep = "\t")
+average_data <- as.data.frame(average_data)
+```
+
+## Initial tests and setup
+
+Only intra-interactions?
+
+```{r}
+sum(average_data$chrom1 != average_data$chrom2) == 0
+```
+
+Setup chromosome information as factor
+
+```{r}
+average_data$chrom1 <- factor(average_data$chrom1, levels = paste0("chr", c(1:22, "X")))
+average_data$chrom2 <- factor(average_data$chrom2, levels = paste0("chr", c(1:22, "X")))
+```
+
+## Analysis
+
+```{r}
+#boxplot by chromosome
+average_data %>% 
+  MyBoxPlot(x = "chrom1", y = "mean", outlier.size = 0.5) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  ggtitle(paste0("Resolution:", resolution, ". Number of interactions:", nrow(average_data))) + 
+  ylab("Mean(Scaled(ICE-balanced(counts)))")
+```
+
+```{r fig.width=10, fig.height=4}
+# set resolutions to analyse
+resolutions = c("50000", "25000", "10000")
+# resolutions = c("5000000", "2500000", "1000000", "500000", "250000", "100000")
+# resolutions = c("5000000")
+
+for(resolution in resolutions){
+  #load data
+  average_data = read.table(file = paste0(in_dir, "mean_values_", resolution, ".tsv"), 
+                          header = TRUE, sep = "\t")
+  average_data <- as.data.frame(average_data)
+  
+  # prepare the chromosome informations as factor
+  average_data$chrom1 <- factor(average_data$chrom1, levels = paste0("chr", c(1:22, "X")))
+  average_data$chrom2 <- factor(average_data$chrom2, levels = paste0("chr", c(1:22, "X")))
+  
+  #plot the average by chromosomes.
+  p <- average_data %>% 
+    MyBoxPlot(x = "chrom1", y = "mean", outlier.size = 0.5) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+    ggtitle(paste0("Resolution:", resolution, ". Number of interactions:", nrow(average_data))) + 
+    ylab("Mean(Scaled(ICE-balanced(counts)))")
+  
+  print(p)
+  
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
