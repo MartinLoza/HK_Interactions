@@ -92,12 +92,12 @@ WhichRegionsOverlap <- function(chr = NULL, query_enhancer = NULL, subject_enhan
   
   #get the query and subject genomic ranges objects
   if(is.null(chr)){
-    gr_query <- GRanges(seqnames = query_enhancer[,"chr"],
-                        ranges = IRanges(start = query_enhancer[,"start"],
-                                         end = query_enhancer[,"end"]))
-    gr_subject <- GRanges(seqnames = subject_enhancer[,"chr"],
-                          ranges = IRanges(start = subject_enhancer[,"start"],
-                                           end = subject_enhancer[,"end"]))
+    gr_query <- GRanges(seqnames = query_enhancer[["chr"]],
+                        ranges = IRanges(start = query_enhancer[["start"]],
+                                         end = query_enhancer[["end"]]))
+    gr_subject <- GRanges(seqnames = subject_enhancer[["chr"]],
+                          ranges = IRanges(start = subject_enhancer[["start"]],
+                                           end = subject_enhancer[["end"]]))
   }else{
     gr_query <- GRanges(seqnames = chr,
                         ranges = IRanges(start = query_enhancer[,"start"],
