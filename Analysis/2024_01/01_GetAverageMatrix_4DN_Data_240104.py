@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
 import os
-
+import gc
 
 scaler = StandardScaler()
 
@@ -188,10 +188,14 @@ def PreprocessPixels(metadata, chromosomes, resolution, test=False):
             
         # Load the balanced matrix
         cool_matrix = cool_data.matrix(balance=True, as_pixels=True, join=True)[:]
+        # Delete the cooler data to save memory
+        del cool_data
+        gc.collect()
 
-        # Remove pixels of chromosomes not included in the main analysis
-        cool_matrix = cool_matrix[cool_matrix['chrom1'].isin(chromosomes)].reset_index(drop=True)
-        cool_matrix = cool_matrix[cool_matrix['chrom2'].isin(chromosomes)].reset_index(drop=True) 
+        
+        # Select pixels of chromosomes of interest
+        cool_matrix = cool_matrix[cool_matrix['chrom1'].isin([chromosomes])].reset_index(drop=True)
+        cool_matrix = cool_matrix[cool_matrix['chrom2'].isin([chromosomes])].reset_index(drop=True) 
             
         # remove inter-chromosomal interactions
         cool_matrix = cool_matrix[cool_matrix['chrom1'] == cool_matrix['chrom2']].reset_index(drop=True) 
@@ -204,14 +208,21 @@ def PreprocessPixels(metadata, chromosomes, resolution, test=False):
             
         # Scale the log10 transformed values by chromosome using scale_by_group function
         scaled_matrix = ScaleByGroup(cool_matrix, 'chrom1')
-            
+        # Delete the cool_matrix to save memory
+        del cool_matrix
+        gc.collect()
+
         # Append the scaled matrix to the list
         scaled_matrices.append(scaled_matrix)
+        # Delete the scaled_matrix to save memory
+        del scaled_matrix
+        gc.collect()
+
 
     # Concatenate the scaled matrices
-    scaled_matrix = pd.concat(scaled_matrices)
+    scaled_matrices = pd.concat(scaled_matrices)
         
-    return scaled_matrix
+    return scaled_matrices
 
 def GetAverageMatrix(scaled_data, metadata,  plot_histogram=True, replaceNaN_with=-10, filter_nCells=6):
 
@@ -241,8 +252,9 @@ def GetAverageMatrix(scaled_data, metadata,  plot_histogram=True, replaceNaN_wit
     mean_values.columns = ['id', 'mean']
 
     # Create a new dataframe to store the mean values
-    # we can filter the data for only one cell type and remove the unnecessary columns
-    data_mean = scaled_data[scaled_data['cell_type'] == metadata['Biosource'][0]].copy()
+    # we can filter the data for only one cell type and remove the unnecessary columns. Let's reuse the scaled_data dataframe
+    data_mean = scaled_data[scaled_data['cell_type'] == metadata['Biosource'][0]]
+    
     # select only the columns we need
     data_mean = data_mean[['id', 'chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2']]
 
@@ -253,7 +265,10 @@ def GetAverageMatrix(scaled_data, metadata,  plot_histogram=True, replaceNaN_wit
     data_mean = data_mean[['chrom1', 'start1', 'end1', 'chrom2', 'start2', 'end2', 'mean']]
 
     return data_mean
-      
+
+#############
+# Main script      
+#############
 
 # Load the metadata. We need to skip the first row because it is a comment. 
 # We use the first row as header
@@ -274,45 +289,56 @@ chromosomes = ['chr1', 'chr2', 'chr3', 'chr4', 'chr5', 'chr6', 'chr7', 'chr8', '
 #test resolution
 #arrange resolution from high to low
 # resolutions.sort(reverse=True)
-resolutions = [1000000, 100000]
+resolutions = [10000000, 5000000]
 # resolutions = [ 100000, 50000, 25000, 10000,  5000, 2000, 1000]
 # resolutions = ['1000', '10000', '100000', '1000000', '2000', '25000', '250000', '2500000', '5000', '50000', '500000', '5000000']
-print("Available resolutions:", resolutions)
+
+print(f"Available resolutions: {resolutions}")
+
 # For each resolution, get the average matrix and save it to a bed file
-for resolution in resolutions:
-    
+for resolution in resolutions: 
+
     # If average matrix already exists, skip the resolution
     if os.path.exists(out_dir + f"average_matrix_{resolution}.bed"):
         print(f"Average matrix for resolution {resolution} already exists. Skipping...")
         continue
 
-    # # Preprocess the pixels
-    # scaled_data = PreprocessPixels(metadata, chromosomes, resolution, test=False)
-    # # Get the average matrix
-    # average_matrix = GetAverageMatrix(scaled_data, metadata, replaceNaN_with=-10, plot_histogram=True, filter_nCells=len(metadata))
-    # # Save the average matrix to a bed file
-    # average_matrix.to_csv(out_dir + f"average_matrix_{resolution}.bed", sep='\t', index=False, header=False)
-    print("Preprocessing pixels...")
-    # Preprocess the pixels
-    scaled_data = PreprocessPixels(metadata, chromosomes, resolution, test=False)
+    print(f"Processing resolution: {resolution}")
 
-    print("Getting average matrix by chromosome...")
-    #I thin the bottle neck is in the averaging step. So let's try to do it within a loop by chromosome
-    # Create a list to store the average matrices by chromosome
+    # Create a list to store the average matrices by chromosome 
     average_matrices = []
-    # For each chromosome, get the average matrix and save it to a bed file
+
+    # To optimize the process, let's try to do it within a loop by chromosome
     for chromosome in chromosomes:
-        # Filter the data by chromosome
-        tmp_data = scaled_data[scaled_data['chrom1'] == chromosome].copy()
+
+        print(f"Processing chromosome: {chromosome}")
+        
+        print("Preprocessing pixels...")
+        # Preprocess the pixels
+        scaled_data = PreprocessPixels(metadata, chromosome, resolution, test=False)
+        gc.collect()
+
+        print("Getting average matrix by chromosome...")
+        
         # Get the average matrix
-        average_matrix = GetAverageMatrix(tmp_data, metadata, replaceNaN_with=-10, plot_histogram=False, filter_nCells=len(metadata))
+        average_matrix = GetAverageMatrix(scaled_data, metadata, replaceNaN_with=-10, plot_histogram=False, filter_nCells=len(metadata))
+        
+        # Remove the scaled data to save memory
+        # del scaled_data
+        gc.collect()
+
         # Append the average matrix to the list
         average_matrices.append(average_matrix)
+        
         # Save the average matrix to a bed file
         average_matrix.to_csv(out_dir + f"/tmp/average_matrix_{resolution}_{chromosome}.bed", sep='\t', index=False, header=False)
 
     # Concatenate the average matrices
     average_matrix = pd.concat(average_matrices)
-
+    
     # Save the average matrix to a bed file
     average_matrix.to_csv(out_dir + f"average_matrix_{resolution}.bed", sep='\t', index=False, header=False)
+    
+    # Remove the average matrices to save memory
+    del average_matrices
+    gc.collect()
