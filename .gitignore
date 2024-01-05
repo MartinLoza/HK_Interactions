@@ -160,11 +160,11 @@ cython_debug/
 #.idea/
 
 
-# Csv files
+# text files
 *.csv
-
-# tsv files
 *.tsv
+*.txt
+*.bed
 
 # R objects
 *.rds
@@ -178,9 +178,7 @@ cython_debug/
 *.hic
 *.bedpe
 *.cool
-
-#Bed files
-*.bed
+*.mcool
 
 #Big files
 *.bigWig
