@@ -1,0 +1,253 @@
+---
+title: "Analysis average HiC and housekeeping core promoters"
+author: "Martin Loza"
+date: "2023/12/19
+---
+
+On this workflow I want to analyse the overlapping between HK-CPs and the average HiC. I want to confirm if these elements have more interactions as compared with CTS-CREs
+
+```{r setup}
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+library(GenomicRanges)
+library(ggpubr)
+
+## Global variables
+in_dir  <- "~/Documents/Projects/HK_Interactions/Analysis/2023_12/2023_12_19/Results/"
+out_dir <- "~/Documents/Projects/HK_Interactions/Analysis/2023_12/2023_12_19/Results/"
+
+date = 231219
+red = "#CC6677"
+blue = "#6699CC"
+
+#Functions
+source(file = "~/Projects/HK_Interactions/Analysis/Functions.R")
+source(file = "~/Projects/HK_Interactions/Analysis/Functions_Visualizations.R")
+
+#Local functions 
+MyComparisonPlot <- function(.data = NULL, wt = NULL, box_width = 1,                             compare_wt = NULL, palette = NULL, adjust = 1, ...){
+  lim_y = c(min(.data[[wt]]), max(.data[[wt]]) + 1.5)
+  
+  p <- .data %>% 
+    MyViolinPlot(x = compare_wt, y = wt, fill_violin = compare_wt, adjust = adjust)
+  
+  if(!is.null(palette)){
+    p <- p + scale_fill_manual(values = palette)
+  }
+  
+  p <- p + geom_boxplot(fill = "white", width = box_width,
+                        linewidth = 0.3, outlier.size = 0.01, outlier.color = "gray") +
+    ggtitle(wt) + 
+    ggpubr::stat_compare_means(method = "wilcox.test", paired = FALSE, ...) 
+  
+  return(p)
+}
+```
+
+## Load average data
+
+```{r}
+resolution = '5000'
+average_data = read.csv(file = paste0("~/Projects/HK_Interactions/Data/HiC/4DN_portal/average/01_bedpe/average_matrix_", resolution, ".bed"), 
+                        header = FALSE, sep = "\t", )
+average_data <- as.data.frame(average_data)
+colnames(average_data) <- c("chr1","start1", "end1", "chr2", "start2", "end2", "mean_contact")
+```
+
+Load annotated interactions 
+
+```{r}
+# interactions <- readRDS("/Volumes/MARTIN_LOZA/Projects/HK_Interactions/Data/Commonly_used/interactions_all_230912.rds")
+# interactions %>% filter(!duplicated(region_id)) %>% pull(n_celltypes) %>% table()
+```
+
+```{r}
+regions <- readRDS("~/Projects/HK_Interactions/Data/HK_CREs/ns/annotated_regions_all_230525.rds")
+
+regions <- regions %>% 
+  mutate(test_n_celltypes = factor(test_n_celltypes))
+levels(regions$test_n_celltypes) <- c("NS", 1:50)
+```
+
+
+## Initial tests and setup
+
+Only intra-interactions?
+
+```{r}
+sum(average_data$chr1 != average_data$chr2) == 0
+```
+
+Setup average data
+
+```{r}
+average_data$chr1 <- factor(average_data$chr1, levels = paste0("chr", c(1:22, "X")))
+average_data$chr2 <- factor(average_data$chr2, levels = paste0("chr", c(1:22, "X")))
+average_data$start1 <- as.integer(average_data$start1)
+average_data$end1 <- as.integer(average_data$end1)
+```
+
+```{r}
+#remove diagonal
+average_data <- average_data %>% mutate(id1 = paste(chr1,":",start1,"-",end1),
+                                      id2 = paste(chr2,":",start2,"-",end2))
+average_data <- average_data %>% filter(id1 != id2)
+```
+
+
+Get only CREs, e.g. we don't care about their interaction
+
+```{r}
+# cres <- interactions %>% GetUniqueRegions()
+cres <- regions 
+table(cres$test_n_celltypes)
+```
+Setup Cres
+
+```{r}
+cres$start <- as.integer(cres$start)
+cres$end <- as.integer(cres$end)
+```
+
+## Analysis
+
+I would like to get the average pixels related to each CTS-CREs and HK-CREs
+
+```{r}
+#let's focus on CTS and HK
+sel_cres <- cres %>% filter(n_celltypes == 0 | n_celltypes == 1 | n_celltypes == 50)
+table(sel_cres$n_celltypes)
+
+sel_cres <- sel_cres %>%
+  mutate(n_celltypes = factor(n_celltypes, levels = c(0,1,50)))
+levels(sel_cres$n_celltypes) <- c("NS", "CTS-CREs", "HK-CREs")
+table(sel_cres$n_celltypes)
+```
+
+```{r}
+# I need to get the bins that overlaps with sel_cres 
+# I need to do this in a loop, to annotate each cres
+
+#get only pixels related to sel_cres
+
+#select columns of interest
+sel_pixels <- average_data %>% select(chr1, start1, end1, mean_contact) 
+#rename columns
+colnames(sel_pixels) <- c("chr", "start", "end", "mean")
+
+#get index of overlapping cres and pixes
+ovl <- WhichRegionsOverlap(query_enhancer = sel_cres, subject_enhancer = sel_pixels)
+sub_idx <- subjectHits(ovl)
+que_idx <- queryHits(ovl)
+# sel_pixels <- sel_pixels[unique(idx),]
+
+sel_cres <- sel_cres %>% mutate(average_contacts = NA)
+sel_cres <- sel_cres %>% mutate(n_contacts = 0)
+```
+
+```{r}
+contact_thr = 1.0
+#for each cre in sel_cres
+for(i in seq_len(nrow(sel_cres))){
+#i = 1
+  #get ovl pixels with current cres
+  c_idx <- which(que_idx == i)
+  #get overlappin pixels
+  ovl_idx <- sub_idx[c_idx]
+  #get mean contacts
+  c_mean_contacts <- sel_pixels[ovl_idx,"mean"]
+  #remove contacts lower than threshold
+  c_mean_contacts <- c_mean_contacts[c_mean_contacts>= contact_thr]
+  #if not empty, calculate the average
+  if(isEmpty(c_mean_contacts)){
+    c_mean_contacts <- NA
+    n_contacts <- 0
+  }else{
+    n_contacts <- length(c_mean_contacts)
+    c_mean_contacts <- mean(c_mean_contacts)
+  }
+  #%>% mean()
+  #assign the mean contacts
+  sel_cres[i,"average_contacts"] <- c_mean_contacts
+  #assign number of contacts
+  sel_cres[i,"n_contacts"] <- n_contacts
+}
+```
+
+```{r}
+# save 
+# saveRDS(object = sel_cres, file = paste0(out_dir,"cres_mean_values_", resolution, ".rds"))
+# sel_cres <- readRDS(file = paste0(out_dir,"cres_mean_values_100000.rds"))
+```
+
+
+
+```{r}
+my_comparison <- list(c("NS", "CTS-CREs"), c("NS", "HK-CREs"), c("CTS-CREs", "HK-CREs"))
+
+p <- sel_cres %>% 
+  MyComparisonPlot(wt = "average_contacts",
+                   compare_wt = "n_celltypes", 
+                   palette =  c("gray", red, blue), adjust = 1.7,
+                   comparisons = my_comparison,
+                   label = "p.signif", vjust = 0.5, box_width = 0.15) + 
+  ylab(expression("Average HiC")) +
+  theme(axis.title.x = element_blank(), plot.title = element_blank())
+
+p
+
+```
+```{r}
+my_comparison <- list(c("NS", "CTS-CREs"), c("NS", "HK-CREs"), c("CTS-CREs", "HK-CREs"))
+
+p <- sel_cres %>% 
+  mutate(log_n_contacts = log10(n_contacts+1)) %>%
+  MyComparisonPlot(wt = "log_n_contacts",
+                   compare_wt = "n_celltypes", 
+                   palette =  c("gray", red, blue), adjust = 1.7,
+                   comparisons = my_comparison,
+                   label = "p.signif", vjust = 0.5, box_width = 0.15) + 
+  ylab(expression("Number of contacts (log" [10] ~ ")")) +
+  theme(axis.title.x = element_blank(), plot.title = element_blank()) +
+  ggtitle(paste0("Resolution: ",resolution ))
+  # geom_jitter(size = 0.001, color = "gray", alpha = 0.05)
+
+p
+
+```
+```{r}
+#boxplot by chromosome
+sel_cres %>% 
+  MyBoxPlot(x = "n_celltypes", y = "average_contacts", outlier.size = 0.5) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  ggtitle(paste0("Resolution:", resolution, ". Number of interactions:", nrow(average_data))) + 
+  ylab("Mean(Scaled(ICE-balanced(counts)))")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

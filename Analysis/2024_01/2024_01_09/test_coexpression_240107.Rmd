@@ -1,0 +1,481 @@
+---
+title: "Test co-expression and HKCP"
+author: "Martin Loza"
+date: "240107"
+---
+
+I would like to test if genes related to HK-CP (HKG and nonHKG) present a coexpression pattern, and if this pattern is related to any HiC one....
+
+```{r}
+#Init 
+library(dplyr)
+library(ggplot2)
+library(GenomicRanges)
+library(patchwork)
+
+# Global variables
+in_dir = "~/Documents/Projects/HK_Interactions/"
+out_dir = "~/Projects/HK_Interactions/Analysis/2024_01/2024_01_09/Results/"
+date = "240108"
+red = "#CC6677"
+blue = "#6699CC"
+
+# Local functions
+
+WhichRegionsOverlap2D <- function(query_enhancer = NULL, subject_enhancer2D = NULL,
+                                  min_overlap = 0){
+  
+    #get the query and subject genomic ranges objects
+  gr_query <- GRanges(seqnames = query_enhancer[["chr"]],
+                      ranges = IRanges(start = query_enhancer[["start"]],
+                                       end = query_enhancer[["end"]]))
+  
+  # 1D
+  gr_subject_1D <- GRanges(seqnames = subject_enhancer2D[["chr1"]],
+                           ranges = IRanges(start = subject_enhancer2D[["start1"]],
+                                         end = subject_enhancer2D[["end1"]]))
+  
+  # 2D
+  gr_subject_2D <- GRanges(seqnames = subject_enhancer2D[["chr2"]],
+                           ranges = IRanges(start = subject_enhancer2D[["start2"]],
+                                         end = subject_enhancer2D[["end2"]]))
+  
+  #Find the overlaps
+  overlaps_1D <- findOverlaps(query = gr_query, subject = gr_subject_1D, minoverlap = min_overlap)
+  overlaps_2D <- findOverlaps(query = gr_query, subject = gr_subject_2D, minoverlap = min_overlap)
+  
+  subject_hits = union(subjectHits(overlaps_1D),
+                       subjectHits(overlaps_1D)) %>%
+    sort(decreasing = FALSE)
+  
+  #return the ids
+  return(subject_hits)
+}
+
+WhichRegionsOverlap1D <- function(query_enhancer = NULL, subject_enhancer1D = NULL,
+                                  min_overlap = 0){
+  
+    #get the query and subject genomic ranges objects
+  gr_query <- GRanges(seqnames = query_enhancer[["chr"]],
+                      ranges = IRanges(start = query_enhancer[["start"]],
+                                       end = query_enhancer[["end"]]))
+  
+  # 1D
+  gr_subject_1D <- GRanges(seqnames = subject_enhancer1D[["chr"]],
+                           ranges = IRanges(start = subject_enhancer1D[["start"]],
+                                         end = subject_enhancer1D[["end"]]))
+  
+  #Find the overlaps
+  overlaps_1D <- findOverlaps(query = gr_query, subject = gr_subject_1D, minoverlap = min_overlap)
+  
+  
+  #return the ids
+  return(overlaps_1D)
+}
+
+```
+
+## Load data
+
+Load HK-CP
+```{r}
+hk_cp = readRDS("~/Projects/HK_Interactions/Data/HK_CREs/annotated/all_regions_annotated_230317.rds")
+```
+
+Load RNA-seq data
+
+```{r}
+cancer_tpm <- readRDS("~/Projects/HK_Interactions/Data/ENCODE_Cancer_RNA/preprocessed/tpm_matrix_230531.rds")
+```
+
+Load metadata of RNA-seq
+
+```{r}
+metadata_RNA = read.csv(file = "~/Projects/HK_Interactions/Data/ENCODE_Cancer_RNA/metadata.tsv", 
+                        sep = "\t")
+```
+
+Load genes annotated for HK-CP
+
+```{r}
+cp_genes <- readRDS("~/Projects/HK_Interactions/Data/HK_CREs/annotated/hk_cp_annotated_genes_230707.rds")
+```
+
+## Set up
+
+First let's select the RNA-seq for K562 cell type
+
+```{r}
+sel_idx <- which(metadata_RNA$Biosample.term.name == "K562")
+sel_accession = metadata_RNA$File.accession[sel_idx]
+```
+
+```{r}
+cell_RNA = cancer_tpm[,sel_accession, drop = FALSE] 
+```
+
+Let's concentrate only in hk-cp
+
+```{r}
+hk_cp <- hk_cp %>% filter(ann_v1 == "CP" & n_celltypes == 50) %>% filter(!duplicated(region_id))
+```
+
+```{r}
+# all hk_cp in the cp_genes dataset
+sum(hk_cp$region_id %in% cp_genes$region_id) 
+sum(cp_genes$region_id %in% hk_cp$region_id) 
+```
+There are a few missing ones. For now, let's just match the two datasets
+
+```{r}
+hk_cp <- hk_cp %>% filter(region_id %in% cp_genes$region_id)
+# all hk_cp in the cp_genes dataset
+sum(hk_cp$region_id %in% cp_genes$region_id) 
+```
+Let's transfer the gene information to the cp_
+
+```{r}
+cell_RNA <- as.data.frame(cell_RNA) %>% mutate(gene_name = rownames(cell_RNA))
+colnames(cell_RNA) <- c("tpm", "gene_name")
+```
+
+```{r}
+cp_genes <- cp_genes %>% left_join(y = cell_RNA, by = "gene_name")
+any(is.na(cp_genes$tpm))
+sum(is.na(cp_genes$tpm))
+```
+Let's keep only existing genes
+
+```{r}
+cp_genes <- cp_genes %>% filter(!is.na(tpm))
+```
+
+update hk_cp
+
+```{r}
+hk_cp <- hk_cp %>% filter(region_id %in% cp_genes$region_id)
+```
+
+## Analysis
+
+Load the average contacts for a given resolution
+
+```{r}
+resolution = 5000
+
+# average_hic <- read.csv(file = "~/Projects/HK_Interactions/Analysis/2023_12/2023_12_26/Results/average_bedpe/mean_values_50000.bed", sep = "\t", header = FALSE)
+
+average_hic <- read.csv(file = paste0( "~/Projects/HK_Interactions/Data/HiC/4DN_portal/average/01_bedpe/average_matrix_", resolution, ".bed"), sep = "\t", header = FALSE)
+
+colnames(average_hic) <- c("chr1","start1", "end1", "chr2", "start2", "end2", "mean_contact")
+```
+
+Let's remove the diagonal of contact matrix
+
+```{r}
+average_hic <- average_hic %>% mutate(id1 = paste0(chr1,":",start1,"-",end1),
+                                      id2 = paste0(chr2,":",start2,"-",end2))
+average_hic <- average_hic %>% filter(id1 != id2)
+```
+
+Create a contact id
+
+```{r}
+average_hic <- average_hic %>% mutate(contact_id = paste0(id1,"/",id2))
+```
+
+
+# Lets calculate the distance of interactions
+
+```{r}
+average_hic <- average_hic %>%
+  mutate(center1 = start1 + floor(resolution/2)) %>% 
+  mutate(center2 = start2 + floor(resolution/2)) %>% 
+  mutate(distance = abs(center2-center1))
+```
+
+### HK-CP to HK-CP
+
+```{r}
+# Get only HK-CP in the first bin
+tmp_df <- average_hic %>% select(chr1, start1, end1)
+colnames(tmp_df) <- c("chr", "start", "end" )
+sel_ovl <- WhichRegionsOverlap1D(query_enhancer = hk_cp, 
+                                 subject_enhancer1D = tmp_df)
+sel_idx <- subjectHits(sel_ovl)
+#as one bin could be associated with more than one enhancer. Let's get only the unique ones
+sel_idx <- sel_idx[!duplicated(sel_idx)]
+# Filter contacts by first bin
+sel_contacts <- average_hic[sel_idx,]
+
+# Get only HK-CP in the second bin
+tmp_df <- sel_contacts %>% select(chr2, start2, end2)
+colnames(tmp_df) <- c("chr", "start", "end" )
+sel_ovl <- WhichRegionsOverlap1D(query_enhancer = hk_cp, 
+                                 subject_enhancer1D = tmp_df)
+sel_idx <- subjectHits(sel_ovl)
+#as one bin could be associated with more than one enhancer. Let's get only the unique ones
+sel_idx <- sel_idx[!duplicated(sel_idx)]
+# Filter contacts by first bin
+sel_contacts <- sel_contacts[sel_idx,]
+
+#reorder indexes
+rownames(sel_contacts) <- 1:nrow(sel_contacts)
+```
+
+
+Save contacts as bedpe
+
+```{r}
+tmp_bedpe <- sel_contacts %>% select(chr1, start1, end1, chr2, start2, end2) %>% mutate(end1 = start1+10, start2 = end2-10)
+#add columns to match format
+tmp_bedpe <- cbind(tmp_bedpe, matrix(".", ncol = 4, nrow = nrow(tmp_bedpe)))
+write.table(x = tmp_bedpe, paste0(out_dir, "/hk_interactions_", resolution, "_", date, ".bed"),
+          quote = FALSE, sep = "\t", row.names = FALSE, col.names = FALSE)
+rm(tmp_bedpe)
+```
+
+Filter contacts with low average value
+
+```{r}
+filter_thr = 0.0
+sel_contacts <- sel_contacts %>% filter(mean_contact>=filter_thr)
+table(sel_contacts$chr1)
+```
+
+I want to pass the enhancer information. Which HK-CP overlap with the region we are investigating.
+We have to do this for the bin1 and bin2
+
+```{r}
+## BIN 1
+
+#Select only unique bins
+tmp_bins <- sel_contacts %>% filter(!duplicated(id1)) %>% select(chr1, start1, end1, id1, center1) 
+colnames(tmp_bins) <- c("chr","start","end", "id1", "center1")
+# For each bin
+# Find overlapping regions
+ovl <- WhichRegionsOverlap1D(query_enhancer = tmp_bins, subject_enhancer1D = hk_cp)
+
+ovl_df <- data.frame(bins = queryHits(ovl), hk_cp = subjectHits(ovl))
+
+#init region id for enhancer info
+tmp_bins$region_id <- NA
+#For each bin, transfer the information from hk_cp 
+for(i in seq_len(nrow(tmp_bins))){
+  # i = 2
+  # select the hk_cp associated with this bin
+  #get idx related to first bin
+  idx <- ovl_df$hk_cp[ovl_df$bins == i]
+  if(length(idx) == 1){ # if there is only one hk_cp associated
+    #pass the information
+    tmp_bins$region_id[i] <- hk_cp$region_id[idx]
+  }else{ # if there are more than one, we select the nearest to the center.
+    c_regions <- hk_cp[idx,]
+    #get the one nearest to the center
+    c_regions <- c_regions[which.min(abs(tmp_bins[i,"center1"]- c_regions$center)),]
+    tmp_bins$region_id[i] <- c_regions$region_id
+  }
+}
+
+rm(c_regions, idx)
+
+#Transfer region information 
+
+tmp_df <- tmp_bins %>% select(id1, region_id)
+colnames(tmp_df) <- c("id1", "region_id1")
+sel_contacts <- sel_contacts %>% left_join(y = tmp_df, by = "id1")
+  
+rm(tmp_df, tmp_bins)
+```
+
+```{r}
+## BIN 2
+
+#Select only unique bins
+tmp_bins <- sel_contacts %>% filter(!duplicated(id2)) %>% select(chr2, start2, end2, id2, center2) 
+colnames(tmp_bins) <- c("chr","start","end", "id2", "center2")
+# For each bin
+# Find overlapping regions
+ovl <- WhichRegionsOverlap1D(query_enhancer = tmp_bins, subject_enhancer1D = hk_cp)
+
+ovl_df <- data.frame(bins = queryHits(ovl), hk_cp = subjectHits(ovl))
+
+#init region id for enhancer info
+tmp_bins$region_id <- NA
+#For each bin, transfer the information from hk_cp 
+for(i in seq_len(nrow(tmp_bins))){
+  # i = 1
+  # select the hk_cp associated with this bin
+  #get idx related to first bin
+  idx <- ovl_df$hk_cp[ovl_df$bins == i]
+  if(length(idx) == 1){ # if there is only one hk_cp associated
+    #pass the information
+    tmp_bins$region_id[i] <- hk_cp$region_id[idx]
+  }else{ # if there are more than one, we select the nearest to the center.
+    c_regions <- hk_cp[idx,]
+    #get the one nearest to the center
+    c_regions <- c_regions[which.min(abs(tmp_bins[i,"center2"]- c_regions$center)),]
+    tmp_bins$region_id[i] <- c_regions$region_id
+  }
+}
+
+rm(c_regions, idx)
+
+#Transfer region information 
+
+tmp_df <- tmp_bins %>% select(id2, region_id)
+colnames(tmp_df) <- c("id2", "region_id2")
+sel_contacts <- sel_contacts %>% left_join(y = tmp_df, by = "id2")
+  
+rm(tmp_df, tmp_bins, sel_ovl, ovl_df, ovl)
+```
+
+Great! we know now which HK-CP corresponds to each bin1 or bin2!
+We can transfer the gene information on each bin1 and bin2
+
+```{r}
+## BIN1
+#select columns of interest
+tmp_genes <- cp_genes %>% select(region_id, gene_name, tss, gene_biotype, is_HKG, divergent)
+colnames(tmp_genes) <- c("region_id1", "gene_name1", "tss1", "gene_biotype1", "is_HKG1", "divergent1")
+#transfer information
+sel_contacts <- sel_contacts %>% left_join(y = tmp_genes, by = "region_id1")
+
+## BIN2
+#select columns of interest
+tmp_genes <- cp_genes %>% select(region_id, gene_name, tss, gene_biotype, is_HKG, divergent)
+colnames(tmp_genes) <- c("region_id2", "gene_name2", "tss2", "gene_biotype2", "is_HKG2", "divergent2")
+#transfer information
+sel_contacts <- sel_contacts %>% left_join(y = tmp_genes, by = "region_id2")
+sel_contacts <- sel_contacts %>% arrange(chr1, start1)
+
+rm(tmp_genes)
+```
+
+Add identifier.
+
+```{r}
+sel_contacts <- sel_contacts %>% mutate(final_id = paste0(contact_id,"_",gene_name1,"_",gene_name2))
+any(duplicated(sel_contacts$final_id))
+```
+
+Finally, we can transfer the RNA-seq information
+
+```{r}
+# Normalize the data
+norm_tpm <- apply(X = cancer_tpm, MARGIN = 2, FUN = log1p) 
+```
+
+
+```{r}
+## Bin1
+#create tmp rna data
+tmp_rna <- as.data.frame(norm_tpm) %>% mutate(gene_name = rownames(norm_tpm))
+colnames(tmp_rna) <- paste0(colnames(tmp_rna),"1")
+#transfer the RNA information
+sel_contacts <- sel_contacts %>% left_join(y = tmp_rna, by = "gene_name1")
+
+## Bin2
+#create tmp rna data
+tmp_rna <- as.data.frame(norm_tpm) %>% mutate(gene_name = rownames(norm_tpm))
+colnames(tmp_rna) <- paste0(colnames(tmp_rna),"2")
+#transfer the RNA information
+sel_contacts <- sel_contacts %>% left_join(y = tmp_rna, by = "gene_name2")
+
+
+rm(tmp_rna)
+```
+
+### Plots
+
+```{r fig.width=8, fig.height=6}
+for(i in seq_len(nrow(metadata_RNA))){
+  
+
+
+tmp_metada = metadata_RNA[i,]
+file = tmp_metada$File.accession
+cell_type = tmp_metada$Biosample.term.name
+
+
+p1 <- sel_contacts %>% filter(!divergent1 & !divergent2) %>%
+  ggplot(mapping = aes_string(x = paste0(file,"1"), y = paste0(file,"2"), color = "is_HKG1")) + 
+  geom_point(alpha = 0.5) + scale_color_manual(values = c(red, blue)) +
+  theme_light() + ggtitle(paste0(cell_type, ". Resolution: ", resolution)) + coord_fixed()
+
+p2 <- sel_contacts %>% filter(!divergent1 & !divergent2) %>%
+  ggplot(mapping = aes_string(x = paste0(file,"1"), y = paste0(file,"2"), color = "is_HKG2")) + 
+  geom_point(alpha = 0.5) + scale_color_manual(values = c(red, blue)) +
+  theme_light() + ggtitle(paste0(cell_type, ". Resolution: ", resolution)) + coord_fixed()
+
+p3 <- sel_contacts %>% 
+  filter(!divergent1 & !divergent2) %>%
+  filter(is_HKG1 & is_HKG2) %>%
+  ggplot(mapping = aes_string(x = paste0(file,"1"), y = paste0(file,"2"), color = "is_HKG2")) + 
+  geom_point(alpha = 0.5) + scale_color_manual(values = c(red, blue)) +
+  theme_light() + ggtitle(paste0(cell_type, ". Resolution: ", resolution)) + coord_fixed()
+
+p4 <- sel_contacts %>% 
+  filter(!divergent1 & !divergent2) %>%
+  filter(!is_HKG1 & !is_HKG2) %>%
+  ggplot(mapping = aes_string(x = paste0(file,"1"), y = paste0(file,"2"), color = "is_HKG2")) + 
+  geom_point(alpha = 0.5) + scale_color_manual(values = c(red, blue)) +
+  theme_light() + ggtitle(paste0(cell_type, ". Resolution: ", resolution)) + coord_fixed()
+
+
+print( (p1+p2)/(p3+p4))
+
+}
+
+```
+
+
+
+
+
+```{r fig.width=8, fig.height=6}
+
+
+p1 <- sel_contacts %>% filter(!divergent1 & !divergent2) %>% filter(distance < 100000) %>%
+  ggplot(mapping = aes_string(x = paste0(file,"1"), y = paste0(file,"2"), color = "distance")) + 
+  geom_point(alpha = 0.5) + #scale_color_manual(values = c(red, blue)) +
+  theme_light() + ggtitle(paste0(cell_type, ". Resolution: ", resolution)) + coord_fixed()
+
+p2 <- sel_contacts %>% filter(!divergent1 & !divergent2) %>% filter(distance < 100000) %>%
+  ggplot(mapping = aes_string(x = paste0(file,"1"), y = paste0(file,"2"), color = "distance")) + 
+  geom_point(alpha = 0.5) + #scale_color_manual(values = c(red, blue)) +
+  theme_light() + ggtitle(paste0(cell_type, ". Resolution: ", resolution)) + coord_fixed()
+
+p3 <- sel_contacts %>% 
+  filter(!divergent1 & !divergent2) %>% filter(distance < 100000) %>%
+  filter(is_HKG1 & is_HKG2) %>%
+  ggplot(mapping = aes_string(x = paste0(file,"1"), y = paste0(file,"2"), color = "distance")) + 
+  geom_point(alpha = 0.3) + #scale_color_manual(values = c(red, blue)) +
+  theme_light() + ggtitle(paste0(cell_type, ". Resolution: ", resolution)) + coord_fixed()
+
+p4 <- sel_contacts %>% 
+  filter(!divergent1 & !divergent2) %>% filter(distance < 100000) %>%
+  filter(!is_HKG1 & !is_HKG2) %>%
+  ggplot(mapping = aes_string(x = paste0(file,"1"), y = paste0(file,"2"), color = "distance")) + 
+  geom_point(alpha = 0.3) + #scale_color_manual(values = c(red, blue)) +
+  theme_light() + ggtitle(paste0(cell_type, ". Resolution: ", resolution)) + coord_fixed()
+
+
+print((p1+p2)/(p3+p4))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
